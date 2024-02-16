@@ -1,0 +1,22 @@
+pluginManagement {
+	ext {
+		repoBase = System.getenv("PANDORA_ARTIFACTORY_GRADLE_CONTEXT") ?: "$artifactory_contextUrl"
+	}
+	repositories {
+		maven {
+			credentials {
+				username System.getenv('PANDORA_ARTIFACTORY_GRADLE_USERNAME') ?: "$artifactory_user"
+				password System.getenv('PANDORA_ARTIFACTORY_GRADLE_PASSWORD') ?: "$artifactory_password"
+			}
+			url "$repoBase/maven-central"
+		}
+		maven {
+			credentials {
+				username System.getenv('PANDORA_ARTIFACTORY_GRADLE_USERNAME') ?: "$artifactory_user"
+				password System.getenv('PANDORA_ARTIFACTORY_GRADLE_PASSWORD') ?: "$artifactory_password"
+			}
+			url "$repoBase/gradle-plugins-cache/"
+		}
+	}
+}
+rootProject.name = 'galaxy'

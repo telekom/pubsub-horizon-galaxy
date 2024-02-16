@@ -1,0 +1,87 @@
+spring:
+  application:
+    name: Horizon Galaxy
+
+logging:
+  level:
+    root: ${LOG_LEVEL:INFO}
+
+kubernetes:
+  enabled: true
+  #roverToken:
+  #kubeConfigPath:
+  informer:
+    resyncperiod:
+      # 10 minutes
+      ms: 600000
+    namespace: ${GALAXY_INFORMER_NAMESPACE:default}
+
+horizon:
+  victorialog:
+    enabled: ${VICTORIALOG_ENABLED:false}
+    collectorUrl: ${VICTORIALOG_COLLECTOR_URL:http://localhost:8428}
+    clientId: ${VICTORIALOG_CLIENT_ID:multiplexer}
+    batchSize: ${VICTORIALOG_BATCH_SIZE:128}
+    observationFlushInterval: ${VICTORIALOG_OBSERVATION_FLUSH_INTERVAL:30000}
+    countEventsInterval: ${VICTORIALOG_COUNT_EVENTS_INTERVAL:1000}
+  kafka:
+    bootstrapServers: ${GALAXY_KAFKA_BROKERS:kafka:9092}
+    transactionIdPrefix: ${GALAXY_KAFKA_TRANSACTION_PREFIX:multiplexer}
+    groupId: ${GALAXY_KAFKA_GROUP_ID:multiplexers}
+    staticMembership: true
+    sessionTimeoutMs: ${GALAXY_KAFKA_SESSION_TIMEOUT:90000}
+    groupInstanceId: ${GALAXY_KAFKA_GROUP_INSTANCE_ID:multiplexer-0}
+    consumingTopic: ${GALAXY_KAFKA_CONSUMING_TOPIC:published}
+    partitionCount: ${GALAXY_KAFKA_PARTITION_COUNT:10}
+    transactionTimeout: ${GALAXY_KAFKA_TRANSACTION_TIMEOUT:1000}
+    autoCreateTopics: ${GALAXY_KAFKA_AUTO_CREATE_TOPICS:false}
+    autoResetOffset: ${GALAXY_KAFKA_AUTO_OFFSET_RESET:earliest}
+    autoCommit: ${GALAXY_KAFKA_AUTO_COMMIT:false}
+    lingerMs: ${GALAXY_KAFKA_LINGER_MS:0}
+    acks: ${GALAXY_KAFKA_ACKS:1}
+    compression:
+      enabled: ${GALAXY_KAFKA_COMPRESSION_ENABLED:false}
+      type: ${GALAXY_KAFKA_COMPRESSION_TYPE:none}
+  cache:
+    enabled: true
+    kubernetesServiceDns: ${GALAXY_CACHE_SERVICE_DNS:app-cache-headless.integration.svc.cluster.local}
+    deDuplication:
+      enabled: ${GALAXY_CACHE_DE_DUPLICATION_ENABLED:false}
+      defaultCacheName: multiplexer-deduplication
+
+pandora:
+  tracing:
+    name: horizon
+
+galaxy:
+  batch-core-threadpool-size: ${GALAXY_CORE_THREADPOOL_SIZE:5}
+  batch-max-threadpool-size: ${GALAXY_MAX_THREADPOOL_SIZE:100}
+  subscription-core-threadpool-size: ${GALAXY_SUBSCRIPTION_CORE_THREADPOOL_SIZE:10}
+  subscription-max-threadpool-size: ${GALAXY_SUBSCRIPTION_MAX_THREADPOOL_SIZE:20}
+  default-environment: ${GALAXY_DEFAULT_ENVIRONMENT:default}
+
+
+management:
+  metrics:
+    distribution:
+      percentiles-histogram:
+        spring.kafka.listener.*: true
+      maximum-expected-value:
+        spring.kafka.listener.*: 60000
+      minimum-expected-value:
+        spring.kafka.listener.*: 1
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,heapdump,shutdown
+  endpoint:
+    health:
+      show-details: always
+    shutdown:
+      enabled: true
+  zipkin:
+    tracing:
+      endpoint: ${JAEGER_COLLECTOR_URL:http://jaeger-collector.example.com:9411}
+  tracing:
+    sampling:
+      probability: ${ZIPKIN_SAMPLER_PROBABILITY:1.0}

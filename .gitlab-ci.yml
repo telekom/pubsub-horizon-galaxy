@@ -1,0 +1,10 @@
+include:
+# https://gitlab.devops.telekom.de/dhei/teams/pandora/gitlab-ci-templates/-/tree/harbor
+- project: 'dhei/teams/pandora/gitlab-ci-templates'
+  file: '/products/horizon/HorizonComponent.Pipeline.gitlab-ci.yml'
+  ref: develop
+
+variables:
+  TARGET_IMAGE_SUBGROUP: horizon
+  JAVA_BUILD_IMAGE: mtr.devops.telekom.de/community/jdk:21
+  DS_JAVA_VERSION: 21
