@@ -1,4 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
+
+<!--
+Copyright 2024 Deutsche Telekom IT GmbH
+
+SPDX-License-Identifier: Apache-2.0
+-->
+
 <configuration>
     <springProfile name="!prod">
         <include resource="org/springframework/boot/logging/logback/defaults.xml"/>

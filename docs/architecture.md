@@ -1,3 +1,9 @@
+<!--
+Copyright 2024 Deutsche Telekom IT GmbH
+
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # Architecture
 The primary function of the Galaxy component is to produce a subscription-based event message for every respective subscriber, relative to the particular type of published event message. For this purpose, the component is configured to monitor the "published" Kafka topic. The activation of the component is prompted by each newly published event message from this topic.
 

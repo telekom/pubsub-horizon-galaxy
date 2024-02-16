@@ -1,7 +1,13 @@
+<!--
+Copyright 2024 Deutsche Telekom IT GmbH
+
+SPDX-License-Identifier: Apache-2.0
+-->
+
 <h1 align="center">Horizon Galaxy</h1>
 
 <p align="center">
-  <img src="docs/imgs/Horizon.svg" alt="galaxy-logo" width="120px" height="120px"/>
+  <img src="docs/img/Horizon.svg" alt="galaxy-logo" width="120px" height="120px"/>
   <br>
   <em>Horizon component for efficient event message multiplexing</em>
   <br>
