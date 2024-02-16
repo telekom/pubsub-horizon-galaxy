@@ -1,0 +1,24 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: Galaxy
+Upstream-Contact: Deutsche Telekom AG <opensource@telekom.de>
+Source: https://github.com/telekom/pubsub-horizon-galaxy
+
+Files: docs/img/*
+Copyright: Copyright 2024 Deutsche Telekom IT GmbH
+License: CC-BY-4.0
+
+Files: src/test/resources/mockito-extensions/org.mockito.plugins.MockMaker src/main/resources/META-INF/spring.factories
+Copyright: Copyright 2024 Deutsche Telekom IT GmbH
+License: Apache-2.0
+
+Files: gradle/*
+Copyright: Copyright 2015 the original author or authors.
+License: Apache-2.0
+
+Files: gradlew gradlew.bat
+Copyright: Copyright 2015 the original author or authors.
+License: Apache-2.0
+
+Files: gradle.properties
+Copyright: Copyright 2015 the original author or authors.
+License: Apache-2.0
