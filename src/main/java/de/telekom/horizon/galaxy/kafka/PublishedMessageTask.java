@@ -13,6 +13,7 @@ import com.fasterxml.jackson.databind.node.MissingNode;
 import de.telekom.eni.pandora.horizon.cache.service.DeDuplicationService;
 import de.telekom.eni.pandora.horizon.kafka.event.EventWriter;
 import de.telekom.eni.pandora.horizon.kubernetes.resource.SubscriptionResource;
+import de.telekom.eni.pandora.horizon.metrics.AdditionalFields;
 import de.telekom.eni.pandora.horizon.metrics.HorizonMetricsHelper;
 import de.telekom.eni.pandora.horizon.model.db.PartialEvent;
 import de.telekom.eni.pandora.horizon.model.event.*;
@@ -20,9 +21,6 @@ import de.telekom.eni.pandora.horizon.model.http.HeaderConstants;
 import de.telekom.eni.pandora.horizon.model.meta.EventRetentionTime;
 import de.telekom.eni.pandora.horizon.model.tracing.Constants;
 import de.telekom.eni.pandora.horizon.tracing.HorizonTracer;
-import de.telekom.eni.pandora.horizon.victorialog.client.VictoriaLogClient;
-import de.telekom.eni.pandora.horizon.victorialog.model.AdditionalFields;
-import de.telekom.eni.pandora.horizon.victorialog.model.Observation;
 import de.telekom.horizon.galaxy.cache.PayloadSizeHistogramCache;
 import de.telekom.horizon.galaxy.cache.SubscriptionCache;
 import de.telekom.horizon.galaxy.model.EvaluationResultStatus;
@@ -34,7 +32,6 @@ import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.jetbrains.annotations.NotNull;
 import org.slf4j.MDC;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
-import org.springframework.util.CollectionUtils;
 
 import java.util.*;
 import java.util.concurrent.*;
@@ -52,7 +49,6 @@ import static de.telekom.eni.pandora.horizon.metrics.HorizonMetricsConstants.MET
 public class PublishedMessageTask implements Callable<PublishedMessageTaskResult> {
 
     private final ObjectMapper objectMapper;
-    private final VictoriaLogClient victoriaLogClient;
     private final ConsumerRecord<String, String> consumerRecord;
     private final HorizonTracer tracer;
     private final EventWriter eventWriter;
@@ -60,7 +56,6 @@ public class PublishedMessageTask implements Callable<PublishedMessageTaskResult
     private final SubscriptionCache subscriptionCache;
     private final DeDuplicationService deDuplicationService;
     private PublishedEventMessage publishedEventMessage;
-    private Observation observation = null;
     private final PayloadSizeHistogramCache incomingPayloadSizeCache;
     private final PayloadSizeHistogramCache outgoingPayloadSizeHistogramCache;
 
@@ -69,7 +64,6 @@ public class PublishedMessageTask implements Callable<PublishedMessageTaskResult
     public PublishedMessageTask(ConsumerRecord<String, String> consumerRecord, PublishedMessageTaskFactory factory) {
         this.consumerRecord = consumerRecord;
 
-        this.victoriaLogClient = factory.getVictoriaLogClient();
         this.tracer = factory.getTracer();
         this.eventWriter = factory.getEventWriter();
         this.metricsHelper = factory.getMetricsHelper();
@@ -110,7 +104,6 @@ public class PublishedMessageTask implements Callable<PublishedMessageTaskResult
 
             setLoggingContext();
             recordIncomingPayloadSize();
-            startObservation();
 
             log.info("Created Task from ConsumerRecord.");
 
@@ -147,7 +140,6 @@ public class PublishedMessageTask implements Callable<PublishedMessageTaskResult
         } finally {
             //Send metrics to victoria metrics
             shutdownTaskExecutorAndFinishSpan(span);
-            sendMetrics(publishedEventMessage);
         }
     }
 
@@ -258,15 +250,6 @@ public class PublishedMessageTask implements Callable<PublishedMessageTaskResult
      */
     private void recordOutgoingPayloadSize(SubscriptionEventMessage subscriptionEventMessage) {
         outgoingPayloadSizeHistogramCache.recordMessage(subscriptionEventMessage);
-    }
-
-    /**
-     * Initiates the observation of latency for the {@link PublishedEventMessage} if needed.
-     */
-    private void startObservation() {
-        if (victoriaLogClient.shouldTrackLatency(CollectionUtils.toMultiValueMap(publishedEventMessage.getHttpHeaders()))) {
-            observation = victoriaLogClient.startObservationFromEvent(publishedEventMessage.getEvent());
-        }
     }
 
     /**
@@ -403,19 +386,6 @@ public class PublishedMessageTask implements Callable<PublishedMessageTaskResult
             filterSpan.finish();
         }
         return filteredEventMessagesPerRecipient;
-    }
-
-    /**
-     * Sends metrics related to the published event message.
-     *
-     * @param publishedEventMessageOrNull the message of the observation
-     * @see VictoriaLogClient
-     */
-    private void sendMetrics(PublishedEventMessage publishedEventMessageOrNull) {
-        if(publishedEventMessageOrNull != null) {
-            victoriaLogClient.finishAndAddObservation(observation);
-            victoriaLogClient.countEvent(publishedEventMessageOrNull.getEvent());
-        }
     }
 
     /**
