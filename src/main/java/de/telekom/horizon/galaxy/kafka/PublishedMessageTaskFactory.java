@@ -11,7 +11,6 @@ import de.telekom.eni.pandora.horizon.kafka.event.EventWriter;
 import de.telekom.eni.pandora.horizon.metrics.HorizonMetricsHelper;
 import de.telekom.eni.pandora.horizon.model.event.PublishedEventMessage;
 import de.telekom.eni.pandora.horizon.tracing.HorizonTracer;
-import de.telekom.eni.pandora.horizon.victorialog.client.VictoriaLogClient;
 import de.telekom.horizon.galaxy.cache.PayloadSizeHistogramCache;
 import de.telekom.horizon.galaxy.cache.SubscriptionCache;
 import de.telekom.horizon.galaxy.config.GalaxyConfig;
@@ -30,7 +29,6 @@ import org.springframework.stereotype.Component;
 @Getter
 public class PublishedMessageTaskFactory {
 
-    private final VictoriaLogClient victoriaLogClient;
     private final HorizonTracer tracer;
     private final EventWriter eventWriter;
     private final HorizonMetricsHelper metricsHelper;
@@ -43,8 +41,7 @@ public class PublishedMessageTaskFactory {
     private final ObjectMapper objectMapper;
 
     @Autowired
-    public PublishedMessageTaskFactory(VictoriaLogClient victoriaLogClient, HorizonTracer tracer, EventWriter eventWriter, HorizonMetricsHelper metricsHelper, SubscriptionCache subscriptionCache, DeDuplicationService deDuplicationService, KafkaProperties kafkaProperties, @Qualifier("incomingPayloadSizeCache") PayloadSizeHistogramCache incomingPayloadSizeCache, @Qualifier("outgoingPayloadSizeCache") PayloadSizeHistogramCache outgoingPayloadSizeHistogramCache, GalaxyConfig galaxyConfig, ObjectMapper objectMapper) {
-        this.victoriaLogClient = victoriaLogClient;
+    public PublishedMessageTaskFactory(HorizonTracer tracer, EventWriter eventWriter, HorizonMetricsHelper metricsHelper, SubscriptionCache subscriptionCache, DeDuplicationService deDuplicationService, KafkaProperties kafkaProperties, @Qualifier("incomingPayloadSizeCache") PayloadSizeHistogramCache incomingPayloadSizeCache, @Qualifier("outgoingPayloadSizeCache") PayloadSizeHistogramCache outgoingPayloadSizeHistogramCache, GalaxyConfig galaxyConfig, ObjectMapper objectMapper) {
         this.tracer = tracer;
         this.eventWriter = eventWriter;
         this.metricsHelper = metricsHelper;

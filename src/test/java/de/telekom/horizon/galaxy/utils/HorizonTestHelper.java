@@ -4,13 +4,13 @@
 
 package de.telekom.horizon.galaxy.utils;
 
-import de.telekom.eni.jfilter.operator.comparison.EqualsOperator;
-import de.telekom.eni.jfilter.operator.comparison.GreaterEqualOperator;
-import de.telekom.eni.jfilter.operator.logic.AndOperator;
 import de.telekom.eni.pandora.horizon.kubernetes.resource.Subscription;
 import de.telekom.eni.pandora.horizon.kubernetes.resource.SubscriptionResource;
 import de.telekom.eni.pandora.horizon.kubernetes.resource.SubscriptionResourceSpec;
 import de.telekom.eni.pandora.horizon.kubernetes.resource.SubscriptionTrigger;
+import de.telekom.jsonfilter.operator.comparison.EqualsOperator;
+import de.telekom.jsonfilter.operator.comparison.GreaterEqualOperator;
+import de.telekom.jsonfilter.operator.logic.AndOperator;
 
 import java.util.List;
 import java.util.UUID;

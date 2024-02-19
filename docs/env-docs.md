@@ -8,12 +8,6 @@ SPDX-License-Identifier: Apache-2.0
 
 | Name                                     | Default                                              | Description                                                       |
 |------------------------------------------|------------------------------------------------------|-------------------------------------------------------------------|
-| VICTORIALOG_ENABLED                      | ``false``                                            | Enable or disable Victorialog integration                         |
-| VICTORIALOG_COLLECTOR_URL                | ``http://localhost:8428``                            | URL for the Victorialog collector                                 |
-| VICTORIALOG_CLIENT_ID                    | ``multiplexer``                                      | Client ID for Victorialog integration                             |
-| VICTORIALOG_BATCH_SIZE                   | ``128``                                              | Batch size for Victorialog                                        |
-| VICTORIALOG_OBSERVATION_FLUSH_INTERVAL   | ``30000``                                            | Interval for flushing observations to Victorialog in milliseconds |
-| VICTORIALOG_COUNT_EVENTS_INTERVAL        | ``1000``                                             | Interval for counting events for Victorialog in milliseconds      |
 | GALAXY_KAFKA_BROKERS                     | ``kafka:9092``                                       | Kafka broker for publishing and consuming events                  |
 | GALAXY_KAFKA_TRANSACTION_PREFIX          | ``multiplexer``                                      | Transaction prefix for publishing events                          |
 | GALAXY_KAFKA_GROUP_ID                    | ``multiplexers``                                     | Kafka consumer group for publishing events                        |

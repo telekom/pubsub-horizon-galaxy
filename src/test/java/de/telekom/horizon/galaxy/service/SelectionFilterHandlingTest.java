@@ -5,8 +5,6 @@
 package de.telekom.horizon.galaxy.service;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
-import de.telekom.eni.jfilter.operator.comparison.GreaterEqualOperator;
-import de.telekom.eni.jfilter.operator.logic.AndOperator;
 import de.telekom.eni.pandora.horizon.kubernetes.resource.SubscriptionTrigger;
 import de.telekom.eni.pandora.horizon.model.event.DeliveryType;
 import de.telekom.eni.pandora.horizon.model.event.PublishedEventMessage;
@@ -14,6 +12,8 @@ import de.telekom.eni.pandora.horizon.model.event.Status;
 import de.telekom.horizon.galaxy.model.EvaluationResultStatus;
 import de.telekom.horizon.galaxy.utils.AbstractIntegrationTest;
 import de.telekom.horizon.galaxy.utils.HorizonTestHelper;
+import de.telekom.jsonfilter.operator.comparison.GreaterEqualOperator;
+import de.telekom.jsonfilter.operator.logic.AndOperator;
 import org.junit.jupiter.api.Test;
 
 import java.util.LinkedHashMap;
@@ -41,7 +41,7 @@ class SelectionFilterHandlingTest extends AbstractIntegrationTest {
         var outboundMessages = receiveOutboundEvents();
 
         assertEquals(1, outboundMessages.size());
-        var outboundMessage = outboundMessages.get(0);
+        var outboundMessage = outboundMessages.getFirst();
 
         assertEquals(Status.DROPPED, outboundMessage.getStatus());
         assertEquals(DeliveryType.CALLBACK, outboundMessage.getDeliveryType());
@@ -74,7 +74,7 @@ class SelectionFilterHandlingTest extends AbstractIntegrationTest {
         var outboundMessages = receiveOutboundEvents();
 
         assertEquals(1, outboundMessages.size());
-        var outboundMessage = outboundMessages.get(0);
+        var outboundMessage = outboundMessages.getFirst();
 
         assertEquals(Status.PROCESSED, outboundMessage.getStatus());
         assertEquals(EvaluationResultStatus.MATCH.toString(), outboundMessage.getAdditionalFields().get("selectionFilterResult"));
@@ -97,7 +97,7 @@ class SelectionFilterHandlingTest extends AbstractIntegrationTest {
         var outboundMessages = receiveOutboundEvents();
 
         assertEquals(1, outboundMessages.size());
-        var outboundMessage = outboundMessages.get(0);
+        var outboundMessage = outboundMessages.getFirst();
 
         assertEquals(Status.PROCESSED, outboundMessage.getStatus());
         assertEquals(EvaluationResultStatus.MATCH.toString(), outboundMessage.getAdditionalFields().get("selectionFilterResult"));
@@ -114,7 +114,7 @@ class SelectionFilterHandlingTest extends AbstractIntegrationTest {
         var outboundMessageList = receiveOutboundEvents();
 
         assertEquals(1, outboundMessageList.size());
-        var outboundMessage = outboundMessageList.get(0);
+        var outboundMessage = outboundMessageList.getFirst();
 
         assertEquals(Status.DROPPED, outboundMessage.getStatus());
         assertEquals(EvaluationResultStatus.INVALID_PAYLOAD_ERROR.toString(), outboundMessage.getAdditionalFields().get("selectionFilterResult"));
@@ -132,7 +132,7 @@ class SelectionFilterHandlingTest extends AbstractIntegrationTest {
         var outboundMessageList = receiveOutboundEvents();
 
         assertEquals(1, outboundMessageList.size());
-        var outboundMessage = outboundMessageList.get(0);
+        var outboundMessage = outboundMessageList.getFirst();
 
         assertEquals(Status.PROCESSED, outboundMessage.getStatus());
         assertEquals(EvaluationResultStatus.NO_FILTER.toString(), outboundMessage.getAdditionalFields().get("selectionFilterResult"));
@@ -155,7 +155,7 @@ class SelectionFilterHandlingTest extends AbstractIntegrationTest {
         var outboundMessages = receiveOutboundEvents();
 
         assertEquals(1, outboundMessages.size());
-        var outboundMessage = outboundMessages.get(0);
+        var outboundMessage = outboundMessages.getFirst();
 
         assertEquals(Status.DROPPED, outboundMessage.getStatus());
         assertEquals(EvaluationResultStatus.INVALID_PAYLOAD_ERROR.toString(), outboundMessage.getAdditionalFields().get("selectionFilterResult"));
@@ -179,7 +179,7 @@ class SelectionFilterHandlingTest extends AbstractIntegrationTest {
         var outboundMessages = receiveOutboundEvents();
 
         assertEquals(1, outboundMessages.size());
-        var outboundMessage = outboundMessages.get(0);
+        var outboundMessage = outboundMessages.getFirst();
 
         assertEquals(Status.PROCESSED, outboundMessage.getStatus());
         assertEquals(EvaluationResultStatus.NO_FILTER.toString(), outboundMessage.getAdditionalFields().get("selectionFilterResult"));

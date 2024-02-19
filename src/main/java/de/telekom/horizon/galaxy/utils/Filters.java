@@ -7,13 +7,13 @@ package de.telekom.horizon.galaxy.utils;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import de.telekom.eni.jfilter.operator.EvaluationResult;
-import de.telekom.eni.jfilter.operator.Operator;
-import de.telekom.eni.jfilter.operator.comparison.ComparisonOperator;
-import de.telekom.eni.jfilter.operator.comparison.ComparisonOperatorEnum;
 import de.telekom.eni.pandora.horizon.kubernetes.resource.Subscription;
 import de.telekom.eni.pandora.horizon.kubernetes.resource.SubscriptionResource;
 import de.telekom.eni.pandora.horizon.kubernetes.resource.SubscriptionTrigger;
+import de.telekom.jsonfilter.operator.EvaluationResult;
+import de.telekom.jsonfilter.operator.Operator;
+import de.telekom.jsonfilter.operator.comparison.ComparisonOperator;
+import de.telekom.jsonfilter.operator.comparison.ComparisonOperatorEnum;
 import lombok.AccessLevel;
 import lombok.NoArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -113,7 +113,7 @@ public class Filters {
      */
     private static ImmutablePair<EvaluationResult, JsonNode> applyFilter(SubscriptionTrigger trigger, JsonNode jsonEventData) {
         if (trigger == null) {
-            return new ImmutablePair<>(de.telekom.eni.jfilter.operator.EvaluationResult.empty(), jsonEventData);
+            return new ImmutablePair<>(EvaluationResult.empty(), jsonEventData);
         }
 
         var selectionResult = applySelectionFilter(trigger.getSelectionFilter(), trigger.getAdvancedSelectionFilter(), jsonEventData);

@@ -5,9 +5,9 @@
 package de.telekom.horizon.galaxy.utils;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import de.telekom.eni.jfilter.operator.EvaluationResult;
-import de.telekom.eni.jfilter.operator.comparison.NotEqualsOperator;
 import de.telekom.horizon.galaxy.model.EvaluationResultStatus;
+import de.telekom.jsonfilter.operator.EvaluationResult;
+import de.telekom.jsonfilter.operator.comparison.NotEqualsOperator;
 import lombok.Getter;
 
 /**
