@@ -118,7 +118,7 @@ public class Filters {
 
         var selectionResult = applySelectionFilter(trigger.getSelectionFilter(), trigger.getAdvancedSelectionFilter(), jsonEventData);
         if (selectionResult.isMatch()) {
-            return new ImmutablePair<>(selectionResult, applyResponseFilter(trigger.getResponseFilter(), jsonEventData));
+            return new ImmutablePair<>(selectionResult, applyResponseFilter(trigger.getResponseFilter(),trigger.getResponseFilterMode() ,jsonEventData));
         }
 
         return new ImmutablePair<>(selectionResult, null);
@@ -167,11 +167,16 @@ public class Filters {
      * @param jsonEventData    incoming data in JsonNode format.
      * @return filtered JsonNode after response filter is applied.
      */
-    private static JsonNode applyResponseFilter(List<String> responseFilter, JsonNode jsonEventData) {
+    private static JsonNode applyResponseFilter(List<String> responseFilter, SubscriptionTrigger.ResponseFilterMode mode, JsonNode jsonEventData) {
         // what fields should be sent to consumer
         if (responseFilter != null && !responseFilter.isEmpty()) {
 
+            mode = Optional.ofNullable(mode).orElse(SubscriptionTrigger.ResponseFilterMode.INCLUDE);
             var strippedNode = objectMapper.createObjectNode();
+
+            if (mode == SubscriptionTrigger.ResponseFilterMode.EXCLUDE) {
+                strippedNode = (ObjectNode) jsonEventData.deepCopy();
+            }
 
             for (String filter : responseFilter) {
                 String path = '/' + filter.replace('.', '/');
@@ -192,7 +197,11 @@ public class Filters {
                         }
                     }
                     var key = pathToken[pathToken.length - 1];
-                    nodeAtPath.set(key, node);
+                    if (mode == SubscriptionTrigger.ResponseFilterMode.EXCLUDE) {
+                        nodeAtPath.remove(key);
+                    } else if (mode == SubscriptionTrigger.ResponseFilterMode.INCLUDE) {
+                        nodeAtPath.set(key, node);
+                    }
                 }
             }
 
