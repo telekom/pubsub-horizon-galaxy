@@ -1,0 +1,11 @@
+{
+  "order": {
+    "number": 2389848,
+    "shoppingCartRef": "/shoppingCart/b717b88c-ba6d-43be-b4f9-ad0316a60755"
+  },
+  "customer": {
+    "firstName": "John",
+    "lastName": "Doe",
+    "email": "john.doe@acme.com"
+  }
+}
