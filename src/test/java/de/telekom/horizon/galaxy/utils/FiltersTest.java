@@ -44,4 +44,16 @@ class FiltersTest {
 
         assertEquals(expectedOutput, response);
     }
+
+    @Test
+    void noFilterModeShouldIncludeFields() throws URISyntaxException, IOException, NoSuchMethodException, InvocationTargetException, IllegalAccessException {
+        JsonNode payload = new ObjectMapper().readTree(new File(getClass().getClassLoader().getResource("response-filter-test-data/payload.json").toURI()));
+        Method method = Filters.class.getDeclaredMethod("applyResponseFilter", List.class, SubscriptionTrigger.ResponseFilterMode.class, JsonNode.class);
+        method.setAccessible(true);
+
+        JsonNode response = (JsonNode) method.invoke(null, List.of("customer.number", "total"), null, payload);
+        JsonNode expectedOutput = new ObjectMapper().readTree(new File(getClass().getClassLoader().getResource("response-filter-test-data/payload-include-expected-output.json").toURI()));
+
+        assertEquals(expectedOutput, response);
+    }
 }
