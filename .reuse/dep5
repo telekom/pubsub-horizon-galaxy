@@ -7,7 +7,7 @@ Files: docs/img/*
 Copyright: Copyright 2024 Deutsche Telekom IT GmbH
 License: CC-BY-4.0
 
-Files: src/test/resources/mockito-extensions/org.mockito.plugins.MockMaker src/main/resources/META-INF/spring.factories
+Files: src/test/resources/*
 Copyright: Copyright 2024 Deutsche Telekom IT GmbH
 License: Apache-2.0
 

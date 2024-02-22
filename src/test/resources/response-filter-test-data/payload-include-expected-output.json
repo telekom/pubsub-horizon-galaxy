@@ -1,0 +1,10 @@
+{
+  "customer": {
+    "number": 2389848
+  },
+  "total": {
+    "amount": 39.99,
+    "currency": "EUR",
+    "taxRate": 19
+  }
+}
