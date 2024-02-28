@@ -55,6 +55,9 @@ dependencies {
     compileOnly "org.projectlombok:lombok"
     testCompileOnly "org.projectlombok:lombok"
 
+    testImplementation("org.apache.httpcomponents:httpclient:${httpClientVersion}") {exclude group: 'commons-logging'}
+
+
     // ENI
     implementation "de.telekom.eni:horizon-spring-boot-starter:${horizonParentVersion}"
 }
