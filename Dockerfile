@@ -2,7 +2,8 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-FROM mtr.devops.telekom.de/tardis-internal/pandora/pandora-java-21
+ARG DOCKER_BASE_IMAGE=azul/zulu-openjdk-alpine:21-jre
+FROM ${DOCKER_BASE_IMAGE}
 
 WORKDIR app
 
