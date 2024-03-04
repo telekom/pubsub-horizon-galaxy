@@ -21,13 +21,6 @@ kubernetes:
     namespace: ${GALAXY_INFORMER_NAMESPACE:default}
 
 horizon:
-  victorialog:
-    enabled: ${VICTORIALOG_ENABLED:false}
-    collectorUrl: ${VICTORIALOG_COLLECTOR_URL:http://localhost:8428}
-    clientId: ${VICTORIALOG_CLIENT_ID:multiplexer}
-    batchSize: ${VICTORIALOG_BATCH_SIZE:128}
-    observationFlushInterval: ${VICTORIALOG_OBSERVATION_FLUSH_INTERVAL:30000}
-    countEventsInterval: ${VICTORIALOG_COUNT_EVENTS_INTERVAL:1000}
   kafka:
     bootstrapServers: ${GALAXY_KAFKA_BROKERS:kafka:9092}
     transactionIdPrefix: ${GALAXY_KAFKA_TRANSACTION_PREFIX:multiplexer}

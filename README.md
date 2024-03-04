@@ -71,16 +71,28 @@ cd galaxy
 ```
 
 #### 3. Start docker-compose
+
+Start a kafka instance available from outside docker with the given docker compose file.
+
 ```bash
 docker-compuse up -d
 ```
 
 #### 4. Run Locally
-```bash
-./gradlew bootRun --args='--spring.profiles.active=dev'
-```
-This command will start Horizon Galaxy in development mode.
 
+```bash
+./gradlew bootRun
+```
+
+#### 5. Docker build
+
+The default docker base image is `azul/zulu-openjdk-alpine:21-jre`. This is customizable via the docker build arg `DOCKER_BASE_IMAGE`. 
+Please note that the default helm values configure the kafka compression type `snappy` whose dependencies have to be available in the result image.
+So either provide a base image with snappy installed or change/disable the compression type in the helm values.
+
+```bash
+docker build -t horizon-galaxy:latest --build-arg="DOCKER_BASE_IMAGE=<myjvmbaseimage:1.0.0>" . 
+```
 
 ### Operational Information
 

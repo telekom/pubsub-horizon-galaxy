@@ -112,7 +112,6 @@ public abstract class AbstractIntegrationTest {
         registry.add("horizon.cache.kubernetesServiceDns", () -> "");
         registry.add("horizon.cache.deDuplication.enabled", () -> true);
         registry.add("kubernetes.enabled", () -> false);
-        registry.add("horizon.victorialog.enabled", () -> false);
     }
 
     public ConsumerRecord<String, String> pollForRecord(int timeout, TimeUnit timeUnit) throws InterruptedException {
