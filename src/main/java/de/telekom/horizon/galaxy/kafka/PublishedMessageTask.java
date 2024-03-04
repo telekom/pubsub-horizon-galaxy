@@ -138,7 +138,6 @@ public class PublishedMessageTask implements Callable<PublishedMessageTaskResult
 
             return new PublishedMessageTaskResult(isSuccessful.get());
         } finally {
-            //Send metrics to victoria metrics
             shutdownTaskExecutorAndFinishSpan(span);
         }
     }
