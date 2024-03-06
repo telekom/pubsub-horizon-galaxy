@@ -1,0 +1,26 @@
+# Copyright 2024 Deutsche Telekom IT GmbH
+#
+# SPDX-License-Identifier: Apache-2.0
+FROM gradle:jdk21-alpine AS builder
+
+WORKDIR /workspace/app
+
+COPY build.gradle settings.gradle gradle.properties ./
+COPY src src
+
+RUN gradle build -x test
+
+FROM azul/zulu-openjdk-alpine:21-jre
+
+USER root
+RUN apk add --no-cache --update gcompat --repository=https://dl-cdn.alpinelinux.org/alpine/v3.18/main/ > /dev/null
+
+USER 1001:1001
+
+WORKDIR /workspace/app
+
+COPY --from=builder /workspace/app/build/libs/galaxy.jar app.jar
+
+EXPOSE 8080
+
+CMD ["java", "-jar", "app.jar"]
