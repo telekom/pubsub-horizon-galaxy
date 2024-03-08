@@ -1,14 +1,13 @@
 # Copyright 2024 Deutsche Telekom IT GmbH
 #
 # SPDX-License-Identifier: Apache-2.0
-FROM gradle:jdk21-alpine AS builder
+FROM azul/zulu-openjdk-alpine:21 AS builder
 
 WORKDIR /workspace/app
 
-COPY build.gradle settings.gradle gradle.properties ./
-COPY src src
-
-RUN gradle build -x test
+COPY . .
+RUN dos2unix ./gradlew
+RUN ./gradlew build -x test
 
 FROM azul/zulu-openjdk-alpine:21-jre
 
