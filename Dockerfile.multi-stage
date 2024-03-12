@@ -1,25 +1,33 @@
 # Copyright 2024 Deutsche Telekom IT GmbH
 #
 # SPDX-License-Identifier: Apache-2.0
+
+ARG BUILD_ENV=standard
+
+# builder image for building the actual runnable jar
 FROM azul/zulu-openjdk-alpine:21 AS builder
-
 WORKDIR /workspace/app
-
 COPY . .
 RUN dos2unix ./gradlew
 RUN ./gradlew build -x test
 
-FROM azul/zulu-openjdk-alpine:21-jre
-
+# standard image build
+FROM azul/zulu-openjdk-alpine:21-jre AS standard
 USER root
 RUN apk add --no-cache --update gcompat --repository=https://dl-cdn.alpinelinux.org/alpine/v3.18/main/ > /dev/null
+USER 1001:1001
+WORKDIR /workspace/app
+COPY --from=builder /workspace/app/build/libs/^galaxy.jar app.jar
 
+# image build that includes a local cacert.pem and import it into the default truststore
+FROM standard as with_cacert
+USER root
+RUN apk add --no-cache ca-certificates
+COPY cacert.pem /usr/local/share/ca-certificates/cacert.pem
+RUN update-ca-certificates
 USER 1001:1001
 
-WORKDIR /workspace/app
-
-COPY --from=builder /workspace/app/build/libs/galaxy.jar app.jar
-
+# main
+FROM ${BUILD_ENV}
 EXPOSE 8080
-
 CMD ["java", "-jar", "app.jar"]
