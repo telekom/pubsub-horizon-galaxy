@@ -17,7 +17,7 @@ USER root
 RUN apk add --no-cache --update gcompat --repository=https://dl-cdn.alpinelinux.org/alpine/v3.18/main/ > /dev/null
 USER 1001:1001
 WORKDIR /workspace/app
-COPY --from=builder /workspace/app/build/libs/^galaxy.jar app.jar
+COPY --from=builder /workspace/app/build/libs/galaxy.jar app.jar
 
 # image build that includes a local cacert.pem and import it into the default truststore
 FROM standard as with_cacert
