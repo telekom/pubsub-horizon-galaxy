@@ -16,6 +16,7 @@ SPDX-License-Identifier: Apache-2.0
 
 <p align="center">
   <a href="#prerequisites">Prerequisites</a> •
+  <a href="#building-starlight">Building Galaxy</a>
   <a href="#configuration">Configuration</a> •
   <a href="#running-starlight">Running Galaxy</a>
 </p>
@@ -35,10 +36,6 @@ For the optimal setup, ensure you have:
 
 - A running instance of Kafka
 - Access to a Kubernetes cluster on which the `Subscription` (subscriber.horizon.telekom.de) custom resource definition has been registered
-
-
-## Configuration
-Horizon Galaxy's configuration is managed through environment variables. Check the [complete list](docs/environment-variables.md) of supported environment variables for setup instructions.
 
 
 ## Building Galaxy
@@ -66,6 +63,9 @@ To simplify things, we have also added a mult-stage Dockerfile to the respositor
 ```bash
 docker build -t horizon-galaxy:latest . -f Dockerfile.multi-stage 
 ```
+
+## Configuration
+Horizon Galaxy's configuration is managed through environment variables. Check the [complete list](docs/environment-variables.md) of supported environment variables for setup instructions.
 
 ## Running Galaxy
 
