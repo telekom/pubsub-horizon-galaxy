@@ -113,6 +113,7 @@ public class Filters {
      */
     private static ImmutablePair<EvaluationResult, JsonNode> applyFilter(SubscriptionTrigger trigger, JsonNode jsonEventData) {
         if (trigger == null) {
+            log.debug("Trigger for subscription is null, returning:\n {}", EvaluationResult.empty());
             return new ImmutablePair<>(EvaluationResult.empty(), jsonEventData);
         }
 
@@ -134,25 +135,30 @@ public class Filters {
      */
     private static EvaluationResult applySelectionFilter(Map<String, String> selectionFilter, Operator advancedSelectionFilter, JsonNode jsonEventData) {
         if (advancedSelectionFilter != null) {
+            log.debug("Advanced selection filter is set, applying:\n {}", advancedSelectionFilter);
             return advancedSelectionFilter.evaluate(jsonEventData.toString());
         }
 
         if (selectionFilter != null) {
+            log.debug("Regular selection filter is set, applying:\n {}", selectionFilter);
 
             for (Map.Entry<String, String> filterEntry : selectionFilter.entrySet()) {
                 Optional<String> value = getStringForJsonPath(jsonEventData, filterEntry.getKey());
 
                 if (value.isEmpty()) {
+                    log.debug("Value at specified path not found, returning error.");
                     return EvaluationResult.withError(ComparisonOperator.instantiate(ComparisonOperatorEnum.EQ, filterEntry.getKey(), filterEntry.getValue()), "<Legacy> Could not find value at specified path.");
                 }
 
                 if (!Objects.equals(filterEntry.getValue(), value.get())) {
+                    log.debug("Value at specified path does not match expected value, returning error.");
                     return EvaluationResult.withError(ComparisonOperator.instantiate(ComparisonOperatorEnum.EQ, filterEntry.getKey(), filterEntry.getValue()), "<Legacy> Value at specified path does not match expected value.");
                 }
 
             }
         }
 
+        log.debug("Neither advanced nor regular selection filter is set, returning valid result.");
         return EvaluationResult.valid(ComparisonOperator.instantiate(ComparisonOperatorEnum.EQ, "", ""));
 
     }
@@ -169,13 +175,14 @@ public class Filters {
      */
     private static JsonNode applyResponseFilter(List<String> responseFilter, SubscriptionTrigger.ResponseFilterMode mode, JsonNode jsonEventData) {
         // what fields should be sent to consumer
+        log.debug("Applying response filter {} with mode {}.", responseFilter, mode);
         if (responseFilter != null && !responseFilter.isEmpty()) {
 
             mode = Optional.ofNullable(mode).orElse(SubscriptionTrigger.ResponseFilterMode.INCLUDE);
             var strippedNode = objectMapper.createObjectNode();
 
             if (mode == SubscriptionTrigger.ResponseFilterMode.EXCLUDE) {
-                strippedNode = (ObjectNode) jsonEventData.deepCopy();
+                strippedNode = jsonEventData.deepCopy();
             }
 
             for (String filter : responseFilter) {
@@ -186,16 +193,7 @@ public class Filters {
                     var p = path.substring(1);
                     String[] pathToken = p.split("/");
 
-                    ObjectNode nodeAtPath = strippedNode;
-                    for (var i = 0; i < pathToken.length - 1; i++) {
-                        var pathTokenI = pathToken[i];
-                        var child = nodeAtPath.get(pathTokenI);
-                        if (child == null || child.isNull()) {
-                            nodeAtPath = nodeAtPath.putObject(pathTokenI);
-                        } else if (child.isObject()) {
-                            nodeAtPath = (ObjectNode) child;
-                        }
-                    }
+                    ObjectNode nodeAtPath = getNodeAtPath(strippedNode, pathToken);
                     var key = pathToken[pathToken.length - 1];
                     if (mode == SubscriptionTrigger.ResponseFilterMode.EXCLUDE) {
                         nodeAtPath.remove(key);
@@ -208,6 +206,20 @@ public class Filters {
             return strippedNode;
         }
         return jsonEventData;
+    }
+
+    private static ObjectNode getNodeAtPath(ObjectNode strippedNode, String[] pathToken) {
+        ObjectNode nodeAtPath = strippedNode;
+        for (var i = 0; i < pathToken.length - 1; i++) {
+            var pathTokenI = pathToken[i];
+            var child = nodeAtPath.get(pathTokenI);
+            if (child == null || child.isNull()) {
+                nodeAtPath = nodeAtPath.putObject(pathTokenI);
+            } else if (child.isObject()) {
+                nodeAtPath = (ObjectNode) child;
+            }
+        }
+        return nodeAtPath;
     }
 
     /**
