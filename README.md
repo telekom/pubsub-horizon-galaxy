@@ -4,7 +4,6 @@ Copyright 2024 Deutsche Telekom IT GmbH
 SPDX-License-Identifier: Apache-2.0
 -->
 
-
 <p align="center">
   <img src="docs/img/Horizon.svg" alt="Starlight logo" width="200">
   <h1 align="center">Horizon Galaxy</h1>
@@ -16,7 +15,7 @@ SPDX-License-Identifier: Apache-2.0
 
 <p align="center">
   <a href="#prerequisites">Prerequisites</a> •
-  <a href="#building-starlight">Building Galaxy</a>
+  <a href="#building-galaxy">Building Galaxy</a> •
   <a href="#configuration">Configuration</a> •
   <a href="#running-starlight">Running Galaxy</a>
 </p>
