@@ -92,7 +92,7 @@ docker-compuse up -d
 Horizon Galaxy includes integration tests that run against an embedded Kafka. To enable local tracing, follow these steps:
 
 1. Spin up Jaeger within Docker using `docker-compose-tracing.yaml`
-2. Uncomment the Zipkin disablement in `AbstractIntegrationTest.java`
+2. Set `spring.zipkin.enabled` to `true` in the `dynamicProperties()` method of `AbstractIntegrationTest.java`
 
 ## Documentation
 
