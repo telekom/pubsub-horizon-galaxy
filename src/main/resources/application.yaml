@@ -36,6 +36,7 @@ horizon:
     autoCommit: ${GALAXY_KAFKA_AUTO_COMMIT:false}
     lingerMs: ${GALAXY_KAFKA_LINGER_MS:0}
     acks: ${GALAXY_KAFKA_ACKS:1}
+    maxRequestSize: ${GALAXY_KAFKA_MAXREQUESTSIZE:1101004}
     compression:
       enabled: ${GALAXY_KAFKA_COMPRESSION_ENABLED:false}
       type: ${GALAXY_KAFKA_COMPRESSION_TYPE:none}

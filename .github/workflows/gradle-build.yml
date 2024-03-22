@@ -5,16 +5,14 @@
 name: Gradle Build and Test
 on:
   push:
+    branches:
+      - main
   pull_request:
     branches:
       - main
 jobs:
   gradle:
     runs-on: ubuntu-latest
-
-    services:
-      docker:
-        image: docker:25-dind
 
     steps:
       - uses: actions/checkout@v4
@@ -27,8 +25,15 @@ jobs:
         uses: gradle/actions/setup-gradle@v3
 
       - name: Execute Gradle build
+        id: gradlebuild
         run: ./gradlew build
-
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        if: ${{ failure() }}
+        with:
+          name: build-artifacts
+          path: build/
+          retention-days: 5
       - name: Add coverage to PR
         id: jacoco
         uses: madrapps/jacoco-report@v1.6.1
@@ -38,4 +43,4 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           min-coverage-overall: 60
           min-coverage-changed-files: 80
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' && steps.gradlebuild.outcome == 'success'
