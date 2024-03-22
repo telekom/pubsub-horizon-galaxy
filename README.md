@@ -29,6 +29,8 @@ SPDX-License-Identifier: Apache-2.0
 
 Horizon Galaxy is a crucial component within the [Horizon architecture](https://github.com/telekom/pubsub-horizon), designed to efficiently multiplex published event messages for each subscription on the respective event type. It plays a key role in managing the flow of events, ensuring duplicates are handled appropriately, and transforming them based on defined response filters.
 
+> **Note:** Galaxy is an essential part of the Horizon ecosystem. Please refer to [documentation of the entire system](https://github.com/telekom/pubsub-horizon) to get the full picture.
+
 ## Prerequisites
 
 For the optimal setup, ensure you have:
