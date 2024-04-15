@@ -7,6 +7,7 @@ package de.telekom.horizon.galaxy.utils;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import de.telekom.eni.pandora.horizon.kafka.event.EventWriter;
+import de.telekom.eni.pandora.horizon.kubernetes.SubscriptionResourceListener;
 import de.telekom.eni.pandora.horizon.kubernetes.resource.SubscriptionResource;
 import de.telekom.eni.pandora.horizon.model.event.Event;
 import de.telekom.eni.pandora.horizon.model.event.PublishedEventMessage;
@@ -15,12 +16,12 @@ import de.telekom.eni.pandora.horizon.model.meta.EventRetentionTime;
 import de.telekom.horizon.galaxy.cache.SubscriptionCache;
 import org.apache.commons.codec.digest.DigestUtils;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
-import org.jetbrains.annotations.NotNull;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.kafka.core.ConsumerFactory;
 import org.springframework.kafka.listener.ContainerProperties;
 import org.springframework.kafka.listener.KafkaMessageListenerContainer;
@@ -51,6 +52,9 @@ public abstract class AbstractIntegrationTest {
 
     private KafkaMessageListenerContainer<String, String> container;
 
+    @MockBean
+    private SubscriptionResourceListener subscriptionResourceListener;
+
     private String eventType;
 
     @Autowired
@@ -70,6 +74,8 @@ public abstract class AbstractIntegrationTest {
 
     @BeforeEach
     void setUp() {
+        subscriptionCache.setHealthy();
+
         eventType = "junit.test.event." + DigestUtils.sha1Hex(String.valueOf(System.currentTimeMillis()));
 
         multiplexedRecordsMap.putIfAbsent(getEventType(), new LinkedBlockingQueue<>());
@@ -111,7 +117,6 @@ public abstract class AbstractIntegrationTest {
         registry.add("horizon.kafka.autoCreateTopics", () -> true);
         registry.add("horizon.cache.kubernetesServiceDns", () -> "");
         registry.add("horizon.cache.deDuplication.enabled", () -> true);
-        registry.add("kubernetes.enabled", () -> false);
     }
 
     public ConsumerRecord<String, String> pollForRecord(int timeout, TimeUnit timeUnit) throws InterruptedException {
@@ -137,7 +142,6 @@ public abstract class AbstractIntegrationTest {
         return receivedMessages;
     }
 
-    @NotNull
     protected PublishedEventMessage getPublishedEventMessage(Object testEvent) {
         String eventId = UUID.randomUUID().toString();
         String traceId = UUID.randomUUID().toString();

@@ -4,12 +4,14 @@
 
 package de.telekom.horizon.galaxy.cache;
 
+import de.telekom.eni.pandora.horizon.exception.UnhealthyCacheException;
 import de.telekom.eni.pandora.horizon.kubernetes.resource.SubscriptionResource;
 import de.telekom.horizon.galaxy.model.SubscriptionCacheKey;
 import org.springframework.stereotype.Component;
 
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * The {@code SubscriptionCache} class is responsible for caching {@link SubscriptionResource} instances
@@ -18,6 +20,8 @@ import java.util.concurrent.ConcurrentMap;
  */
 @Component
 public class SubscriptionCache {
+
+    private final AtomicBoolean healthy = new AtomicBoolean(false);
 
     private final SubscriptionCountGaugeCache subscriptionCountGaugeCache;
     private final ConcurrentHashMap<SubscriptionCacheKey, ConcurrentHashMap<String, SubscriptionResource>> cache = new ConcurrentHashMap<>();
@@ -79,8 +83,20 @@ public class SubscriptionCache {
      * @return A concurrent map where the keys are the SubscriptionIds and the values are the corresponding {@link SubscriptionResource}.
      * If no such subscriptions exist for the given environment and event type, this method may return <strong>null</strong>.
      */
-    public ConcurrentMap<String, SubscriptionResource> getSubscriptionsForEnvironmentAndEventType(String environment, String eventType) {
+    public ConcurrentMap<String, SubscriptionResource> getSubscriptionsForEnvironmentAndEventType(String environment, String eventType) throws UnhealthyCacheException {
+        if (!isHealthy()) {
+            throw new UnhealthyCacheException("PublisherCache is in unhealthy state.");
+        }
+
         SubscriptionCacheKey key = generateSubscriptionCacheKey(environment, eventType);
         return cache.get(key);
+    }
+
+    public boolean isHealthy() {
+        return healthy.get();
+    }
+
+    public void setHealthy() {
+        healthy.compareAndExchange(false, true);
     }
 }

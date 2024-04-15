@@ -10,7 +10,6 @@ import de.telekom.horizon.galaxy.config.GalaxyConfig;
 import de.telekom.horizon.galaxy.model.PublishedMessageTaskResult;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
-import org.jetbrains.annotations.NotNull;
 import org.springframework.kafka.listener.AbstractConsumerSeekAware;
 import org.springframework.kafka.listener.BatchAcknowledgingMessageListener;
 import org.springframework.kafka.support.Acknowledgment;
@@ -50,7 +49,6 @@ public class PublishedMessageListener extends AbstractConsumerSeekAware implemen
         this.taskExecutor = initThreadPoolTaskExecutor(galaxyConfig);
     }
 
-    @NotNull
     private ThreadPoolTaskExecutor initThreadPoolTaskExecutor(GalaxyConfig galaxyConfig) {
         final ThreadPoolTaskExecutor threadPoolTaskExecutor = new ThreadPoolTaskExecutor();
         threadPoolTaskExecutor.setCorePoolSize(galaxyConfig.getBatchCoreThreadPoolSize());
@@ -70,7 +68,7 @@ public class PublishedMessageListener extends AbstractConsumerSeekAware implemen
      * @param acknowledgment  the acknowledgment object used to nack or ack the batch (partially)
      */
     @Override
-    public void onMessage(List<ConsumerRecord<String, String>> consumerRecords, @NotNull Acknowledgment acknowledgment) {
+    public void onMessage(List<ConsumerRecord<String, String>> consumerRecords, Acknowledgment acknowledgment) {
         List<Future<PublishedMessageTaskResult>> taskFutureList = new ArrayList<>();
 
         for (ConsumerRecord<String, String> consumerRecord: consumerRecords) {

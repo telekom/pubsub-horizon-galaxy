@@ -11,6 +11,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.MissingNode;
 import de.telekom.eni.pandora.horizon.cache.service.DeDuplicationService;
+import de.telekom.eni.pandora.horizon.exception.UnhealthyCacheException;
 import de.telekom.eni.pandora.horizon.kafka.event.EventWriter;
 import de.telekom.eni.pandora.horizon.kubernetes.resource.SubscriptionResource;
 import de.telekom.eni.pandora.horizon.metrics.AdditionalFields;
@@ -29,7 +30,6 @@ import de.telekom.horizon.galaxy.utils.FilterEventMessageWrapper;
 import de.telekom.horizon.galaxy.utils.Filters;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
-import org.jetbrains.annotations.NotNull;
 import org.slf4j.MDC;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 
@@ -76,7 +76,6 @@ public class PublishedMessageTask implements Callable<PublishedMessageTaskResult
         taskExecutor = initThreadPoolTaskExecutor(factory);
     }
 
-    @NotNull
     private ThreadPoolTaskExecutor initThreadPoolTaskExecutor(PublishedMessageTaskFactory factory) {
         final ThreadPoolTaskExecutor threadPoolTaskExecutor = new ThreadPoolTaskExecutor();
         threadPoolTaskExecutor.setThreadGroupName("multiplex");
@@ -89,7 +88,7 @@ public class PublishedMessageTask implements Callable<PublishedMessageTaskResult
     }
 
     @Override
-    public PublishedMessageTaskResult call() {
+    public PublishedMessageTaskResult call() throws UnhealthyCacheException {
         //Start main span for published-message-task
         var span = tracer.startSpanFromKafkaHeaders("consume published message", consumerRecord.headers());
         try (var ignored = tracer.withSpanInScope(span)) {
@@ -148,7 +147,6 @@ public class PublishedMessageTask implements Callable<PublishedMessageTaskResult
      * @param futureList The list of CompletableFuture instances representing messages being sent.
      * @return An {@link AtomicBoolean} indicating whether all messages were sent successfully.
      */
-    @NotNull
     private static AtomicBoolean waitForAllMessagesToBeSent(List<CompletableFuture<?>> futureList) {
         AtomicBoolean isSuccessful = new AtomicBoolean(true);
         CompletableFuture
@@ -168,7 +166,6 @@ public class PublishedMessageTask implements Callable<PublishedMessageTaskResult
      * @param filteredEventMessagesPerRecipient  A map of SubscriptionId to {@link FilterEventMessageWrapper}.
      * @return A list of CompletableFutures representing the asynchronous sending of messages to kafka.
      */
-    @NotNull
     private List<CompletableFuture<?>> sendMessagesToKafkaAsync(Map<String, SubscriptionEventMessage> subscriptionEventMessagesMap, Map<String, FilterEventMessageWrapper> filteredEventMessagesPerRecipient) {
         List<CompletableFuture<?>> futureList = new ArrayList<>();
 
@@ -198,7 +195,6 @@ public class PublishedMessageTask implements Callable<PublishedMessageTaskResult
      * @param filteredEventMessagesPerRecipient    A map of SubscriptionId to {@link FilterEventMessageWrapper}.
      * @return A CompletableFuture representing the asynchronous sending of the message.
      */
-    @NotNull
     private CompletableFuture<Void> sendMessageToKafkaAsync(SubscriptionEventMessage subscriptionEventMessage, Map<String, FilterEventMessageWrapper> filteredEventMessagesPerRecipient) {
         var mdcMap = MDC.getCopyOfContextMap();
         return CompletableFuture.runAsync(tracer.withCurrentTraceContext(() -> {
@@ -368,7 +364,6 @@ public class PublishedMessageTask implements Callable<PublishedMessageTaskResult
      * @return a Map where the key is the SubscriptionId and the value is the filtered event message
      * @see FilterEventMessageWrapper
      */
-    @NotNull
     private Map<String, FilterEventMessageWrapper> getFilteredEventMessagesPerRecipient(List<SubscriptionResource> recipients) {
         var filterSpan = tracer.startScopedDebugSpan("apply filters");
         Map<String, FilterEventMessageWrapper> filteredEventMessagesPerRecipient = new HashMap<>();
@@ -401,7 +396,7 @@ public class PublishedMessageTask implements Callable<PublishedMessageTaskResult
      * @throws NullPointerException if the provided PublishedEventMessage is null.
      * @see DeDuplicationService
      */
-    private List<SubscriptionResource> getRecipientsForPublishedEventMessage(PublishedEventMessage publishedEventMessage) {
+    private List<SubscriptionResource> getRecipientsForPublishedEventMessage(PublishedEventMessage publishedEventMessage) throws UnhealthyCacheException {
         String eventType = publishedEventMessage.getEvent().getType();
         ConcurrentMap<String, SubscriptionResource> subscriptionsForEnvironmentAndType = subscriptionCache.getSubscriptionsForEnvironmentAndEventType(publishedEventMessage.getEnvironment(), eventType);
         return subscriptionsForEnvironmentAndType != null ?

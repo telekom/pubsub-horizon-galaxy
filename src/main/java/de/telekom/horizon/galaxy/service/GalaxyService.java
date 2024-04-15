@@ -4,11 +4,12 @@
 
 package de.telekom.horizon.galaxy.service;
 
-import de.telekom.eni.pandora.horizon.kubernetes.InformerStoreInitHandler;
+import de.telekom.eni.pandora.horizon.exception.CouldNotStartInformerException;
+import de.telekom.eni.pandora.horizon.kubernetes.ListenerEvent;
 import de.telekom.eni.pandora.horizon.kubernetes.SubscriptionResourceListener;
+import de.telekom.horizon.galaxy.cache.SubscriptionCache;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.SpringApplication;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.event.EventListener;
@@ -20,52 +21,33 @@ import org.springframework.stereotype.Service;
 @Slf4j
 public class GalaxyService {
 
+    private final ApplicationContext applicationContext;
+
+    private final SubscriptionCache subscriptionCache;
+
     private final SubscriptionResourceListener subscriptionResourceListener;
 
     private final ConcurrentMessageListenerContainer<String, String> messageListenerContainer;
 
-    private final InformerStoreInitHandler informerStoreInitHandler;
-
-    private final ApplicationContext context;
-
-    public GalaxyService(@Autowired(required = false) SubscriptionResourceListener subscriptionResourceListener,
-                         ConcurrentMessageListenerContainer<String, String> messageListenerContainer,
-                         @Autowired(required = false) InformerStoreInitHandler informerStoreInitHandler,
-                         ApplicationContext context) {
+    public GalaxyService(ApplicationContext applicationContext, SubscriptionCache subscriptionCache, SubscriptionResourceListener subscriptionResourceListener,
+                         ConcurrentMessageListenerContainer<String, String> messageListenerContainer) {
+        this.applicationContext = applicationContext;
+        this.subscriptionCache = subscriptionCache;
         this.subscriptionResourceListener = subscriptionResourceListener;
         this.messageListenerContainer = messageListenerContainer;
-        this.informerStoreInitHandler = informerStoreInitHandler;
-        this.context = context;
     }
 
     @PostConstruct
     public void init() {
         if (subscriptionResourceListener != null) {
-            subscriptionResourceListener.start();
-
-            log.info("SubscriptionResourceListener started.");
-
-            (new Thread(() -> {
-                log.info("Waiting until Subscription resources are fully synced...");
-
-                while (!informerStoreInitHandler.isFullySynced()) {
-                    try {
-                        // Will be cleaned up in future
-                        Thread.sleep(1000L);
-                    } catch (InterruptedException var6) {
-                        Thread.currentThread().interrupt();
-                        break;
-                    }
-                }
-
-                startMessageListenerContainer();
-            })).start();
-        } else {
-            startMessageListenerContainer();
+            try {
+                subscriptionResourceListener.start();
+            } catch (CouldNotStartInformerException e) {
+                log.error(e.getMessage(), e);
+                SpringApplication.exit(applicationContext, () -> 1);
+            }
         }
-    }
 
-    private void startMessageListenerContainer() {
         if (messageListenerContainer != null) {
             messageListenerContainer.start();
 
@@ -74,11 +56,31 @@ public class GalaxyService {
     }
 
     @EventListener
+    public void handleSubscriptionResourceListenerEvent(ListenerEvent e) {
+        if (e.getType() == ListenerEvent.Type.SUBSCRIPTION_RESOURCE_LISTENER) {
+            switch (e.getEvent()) {
+                case INFORMER_STARTED -> {
+                    log.info("Received INFORMER_STARTED event from SubscriptionResourceListener.");
+
+                    subscriptionCache.setHealthy();
+                }
+                case INFORMER_STOPPED -> {
+                    log.error("Received INFORMER_STOPPED event from SubscriptionResourceListener, terminating.");
+
+                    SpringApplication.exit(applicationContext, () -> 2);
+                }
+            }
+        }
+    }
+
+    @EventListener
     public void containerStoppedHandler(ContainerStoppedEvent event) {
         log.error("MessageListenerContainer stopped with event {}. Exiting...", event.toString());
+
         if (messageListenerContainer != null) {
             messageListenerContainer.stop();
         }
-        SpringApplication.exit(context, () -> -2);
+
+        SpringApplication.exit(applicationContext, () -> 3);
     }
 }

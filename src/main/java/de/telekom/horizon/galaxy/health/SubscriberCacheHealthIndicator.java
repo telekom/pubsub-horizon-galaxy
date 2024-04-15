@@ -4,8 +4,7 @@
 
 package de.telekom.horizon.galaxy.health;
 
-import de.telekom.eni.pandora.horizon.kubernetes.InformerStoreInitHandler;
-import org.springframework.beans.factory.annotation.Autowired;
+import de.telekom.horizon.galaxy.cache.SubscriptionCache;
 import org.springframework.boot.actuate.health.Health;
 import org.springframework.boot.actuate.health.HealthIndicator;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -19,10 +18,11 @@ import org.springframework.stereotype.Component;
 @Component
 @ConditionalOnProperty(value = "kubernetes.enabled", havingValue = "true")
 public class SubscriberCacheHealthIndicator implements HealthIndicator {
-    private final InformerStoreInitHandler informerStoreInitHandler;
 
-    public SubscriberCacheHealthIndicator(@Autowired(required = false) InformerStoreInitHandler informerStoreInitHandler) {
-        this.informerStoreInitHandler = informerStoreInitHandler;
+    private final SubscriptionCache subscriptionCache;
+
+    public SubscriberCacheHealthIndicator(SubscriptionCache subscriptionCache) {
+        this.subscriptionCache = subscriptionCache;
     }
 
     /**
@@ -36,10 +36,10 @@ public class SubscriberCacheHealthIndicator implements HealthIndicator {
     public Health health() {
         Health.Builder status = Health.up();
 
-        if (!informerStoreInitHandler.isFullySynced()) {
+        if (!subscriptionCache.isHealthy()) {
             status = Health.down();
         }
 
-        return status.withDetails(informerStoreInitHandler.getInitalSyncedStats()).build();
+        return status.build();
     }
 }

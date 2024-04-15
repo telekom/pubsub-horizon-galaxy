@@ -9,7 +9,6 @@ import de.telekom.eni.pandora.horizon.model.event.PublishedEventMessage;
 import de.telekom.eni.pandora.horizon.model.event.Status;
 import de.telekom.horizon.galaxy.utils.AbstractIntegrationTest;
 import de.telekom.horizon.galaxy.utils.HorizonTestHelper;
-import org.intellij.lang.annotations.Language;
 import org.junit.jupiter.api.Test;
 
 import java.util.LinkedHashMap;
@@ -21,7 +20,7 @@ class ResponseFilterHandlingTest extends AbstractIntegrationTest {
     @Test
     void onlyFilteredFieldsShouldBeSent() throws JsonProcessingException {
         addTestSubscription(HorizonTestHelper.getSubscriptionResourceWithResponseFilter(TEST_ENVIRONMENT, getEventType()));
-        @Language("JSON") String testEvent = """
+        String testEvent = """
                 {
                     "foo":{
                       "bar": "I'm foo.bar",
@@ -37,7 +36,7 @@ class ResponseFilterHandlingTest extends AbstractIntegrationTest {
 
         var outboundMessages = receiveOutboundEvents();
 
-        @Language("JSON") String expectedOutboundData = """
+        String expectedOutboundData = """
                 {
                   "foo": {
                     "bar": "I'm foo.bar"
@@ -55,7 +54,7 @@ class ResponseFilterHandlingTest extends AbstractIntegrationTest {
     @Test
     void messageShouldBeSentIfAllFieldsAreFiltered() throws JsonProcessingException {
         addTestSubscription(HorizonTestHelper.getSubscriptionResourceWithResponseFilter(TEST_ENVIRONMENT, getEventType()));
-        @Language("JSON") String testEvent = """
+        String testEvent = """
                 {
                   "foo": "bar"\s
                 }""";
