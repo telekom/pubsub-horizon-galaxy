@@ -9,8 +9,10 @@ import de.telekom.eni.pandora.horizon.kubernetes.SubscriptionResourceListener;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.ExitCodeEvent;
 import org.springframework.boot.SpringApplication;
 import org.springframework.context.ApplicationContext;
+import org.springframework.context.event.ContextClosedEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.kafka.event.ContainerStoppedEvent;
 import org.springframework.kafka.listener.ConcurrentMessageListenerContainer;
@@ -26,16 +28,16 @@ public class GalaxyService {
 
     private final InformerStoreInitHandler informerStoreInitHandler;
 
-    private final ApplicationContext context;
+    private final ApplicationContext applicationContext;
 
     public GalaxyService(@Autowired(required = false) SubscriptionResourceListener subscriptionResourceListener,
                          ConcurrentMessageListenerContainer<String, String> messageListenerContainer,
                          @Autowired(required = false) InformerStoreInitHandler informerStoreInitHandler,
-                         ApplicationContext context) {
+                         ApplicationContext applicationContext) {
         this.subscriptionResourceListener = subscriptionResourceListener;
         this.messageListenerContainer = messageListenerContainer;
         this.informerStoreInitHandler = informerStoreInitHandler;
-        this.context = context;
+        this.applicationContext = applicationContext;
     }
 
     @PostConstruct
@@ -73,12 +75,26 @@ public class GalaxyService {
         }
     }
 
-    @EventListener
-    public void containerStoppedHandler(ContainerStoppedEvent event) {
-        log.error("MessageListenerContainer stopped with event {}. Exiting...", event.toString());
-        if (messageListenerContainer != null) {
+    /**
+     * Handles the application stopping event by stopping the Kafka message listener container.
+     */
+    @EventListener(classes = {ExitCodeEvent.class, ContextClosedEvent.class})
+    public void applicationStoppedHandler() {
+        if (messageListenerContainer != null && messageListenerContainer.isRunning()) {
             messageListenerContainer.stop();
+
+            log.info("Kafka message listener container stopped.");
         }
-        SpringApplication.exit(context, () -> -2);
+    }
+
+    /**
+     * Handles the event when the Kafka message listener container is stopped.
+     * This method initiates the application exit process when the Kafka message listener container has been stopped.
+     */
+    @EventListener(classes = {ContainerStoppedEvent.class})
+    public void containerStoppedHandler() {
+        log.error("MessageListenerContainer stopped. Exiting...");
+
+        System.exit(SpringApplication.exit(applicationContext, () -> 1));
     }
 }
