@@ -18,7 +18,6 @@ import org.springframework.lang.NonNull;
 import java.util.concurrent.ConcurrentHashMap;
 
 import static de.telekom.eni.pandora.horizon.metrics.HorizonMetricsConstants.TAG_EVENT_TYPE;
-import static de.telekom.eni.pandora.horizon.metrics.HorizonMetricsConstants.TAG_SUBSCRIPTION_ID;
 
 /**
  * This class is responsible for caching distribution summaries of {@link EventMessage}

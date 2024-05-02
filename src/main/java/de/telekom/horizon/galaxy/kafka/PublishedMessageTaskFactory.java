@@ -12,7 +12,7 @@ import de.telekom.eni.pandora.horizon.metrics.HorizonMetricsHelper;
 import de.telekom.eni.pandora.horizon.model.event.PublishedEventMessage;
 import de.telekom.eni.pandora.horizon.tracing.HorizonTracer;
 import de.telekom.horizon.galaxy.cache.PayloadSizeHistogramCache;
-import de.telekom.horizon.galaxy.cache.SubscriptionCache;
+import de.telekom.horizon.galaxy.cache.SubscriberCache;
 import de.telekom.horizon.galaxy.config.GalaxyConfig;
 import lombok.Getter;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
@@ -32,7 +32,7 @@ public class PublishedMessageTaskFactory {
     private final HorizonTracer tracer;
     private final EventWriter eventWriter;
     private final HorizonMetricsHelper metricsHelper;
-    private final SubscriptionCache subscriptionCache;
+    private final SubscriberCache subscriptionCache;
     private final DeDuplicationService deDuplicationService;
     private final KafkaProperties kafkaProperties;
     private final PayloadSizeHistogramCache incomingPayloadSizeCache;
@@ -41,7 +41,7 @@ public class PublishedMessageTaskFactory {
     private final ObjectMapper objectMapper;
 
     @Autowired
-    public PublishedMessageTaskFactory(HorizonTracer tracer, EventWriter eventWriter, HorizonMetricsHelper metricsHelper, SubscriptionCache subscriptionCache, DeDuplicationService deDuplicationService, KafkaProperties kafkaProperties, @Qualifier("incomingPayloadSizeCache") PayloadSizeHistogramCache incomingPayloadSizeCache, @Qualifier("outgoingPayloadSizeCache") PayloadSizeHistogramCache outgoingPayloadSizeHistogramCache, GalaxyConfig galaxyConfig, ObjectMapper objectMapper) {
+    public PublishedMessageTaskFactory(HorizonTracer tracer, EventWriter eventWriter, HorizonMetricsHelper metricsHelper, SubscriberCache subscriptionCache, DeDuplicationService deDuplicationService, KafkaProperties kafkaProperties, @Qualifier("incomingPayloadSizeCache") PayloadSizeHistogramCache incomingPayloadSizeCache, @Qualifier("outgoingPayloadSizeCache") PayloadSizeHistogramCache outgoingPayloadSizeHistogramCache, GalaxyConfig galaxyConfig, ObjectMapper objectMapper) {
         this.tracer = tracer;
         this.eventWriter = eventWriter;
         this.metricsHelper = metricsHelper;

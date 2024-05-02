@@ -22,13 +22,16 @@ import java.util.List;
 import static de.telekom.horizon.galaxy.utils.HorizonTestHelper.createDefaultSubscriptionResource;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.mockito.Mockito.when;
 
 class SelectionFilterHandlingTest extends AbstractIntegrationTest {
 
     @Test
         //UNMATCHED consumer filter should result in DROPPED message
     void unmatchedConsumerFilterShouldResultInDroppedMessage() throws JsonProcessingException {
-        addTestSubscription(HorizonTestHelper.getSubscriptionResourceWithSelectionFilter(TEST_ENVIRONMENT, getEventType()));
+        var subscription = HorizonTestHelper.getSubscriptionResourceWithSelectionFilter(TEST_ENVIRONMENT, getEventType());
+        when(subscriptionCacheMock.getSubscriptionsForEnvironmentAndEventType(TEST_ENVIRONMENT, getEventType())).thenReturn(List.of(subscription));
+
         String testEvent = """
                 {
                     "foo":"notBar",
@@ -66,7 +69,7 @@ class SelectionFilterHandlingTest extends AbstractIntegrationTest {
 
         subscriptionResource.getSpec().setSubscription(subscription);
 
-        addTestSubscription(subscriptionResource);
+        when(subscriptionCacheMock.getSubscriptionsForEnvironmentAndEventType(TEST_ENVIRONMENT, getEventType())).thenReturn(List.of(subscriptionResource));
 
         PublishedEventMessage inboundMessage = getPublishedEventMessage(12);
         simulateNewPublishedEvent(inboundMessage);
@@ -84,7 +87,10 @@ class SelectionFilterHandlingTest extends AbstractIntegrationTest {
     @Test
         //MATCHED consumer filter should result in PROCESSED message
     void matchedConsumerFilterShouldResultInProcessedMessage() throws JsonProcessingException {
-        addTestSubscription(HorizonTestHelper.getSubscriptionResourceWithSelectionFilter(TEST_ENVIRONMENT, getEventType()));
+
+        var subscription = HorizonTestHelper.getSubscriptionResourceWithSelectionFilter(TEST_ENVIRONMENT, getEventType());
+        when(subscriptionCacheMock.getSubscriptionsForEnvironmentAndEventType(TEST_ENVIRONMENT, getEventType())).thenReturn(List.of(subscription));
+
         String testEvent = """
                 {
                     "foo":"bar",
@@ -106,7 +112,9 @@ class SelectionFilterHandlingTest extends AbstractIntegrationTest {
     @Test
         //Empty payload should result in DROPPED message when filter IS set
     void emptyPayloadShouldResultInDroppedMessageWhenFilterIsSet() throws JsonProcessingException {
-        addTestSubscription(HorizonTestHelper.getSubscriptionResourceWithSelectionFilter(TEST_ENVIRONMENT, getEventType()));
+
+        var subscription = HorizonTestHelper.getSubscriptionResourceWithSelectionFilter(TEST_ENVIRONMENT, getEventType());
+        when(subscriptionCacheMock.getSubscriptionsForEnvironmentAndEventType(TEST_ENVIRONMENT, getEventType())).thenReturn(List.of(subscription));
 
         PublishedEventMessage inboundMessage = getPublishedEventMessage("");
         simulateNewPublishedEvent(inboundMessage);
@@ -124,7 +132,9 @@ class SelectionFilterHandlingTest extends AbstractIntegrationTest {
     @Test
         // Empty payload should result in PROCESSED message when filter IS NOT set
     void emptyPayloadShouldResultInProcessedMessageWhenFilterIsNotSet() throws JsonProcessingException {
-        addTestSubscription(createDefaultSubscriptionResource(TEST_ENVIRONMENT, getEventType()));
+
+        var subscription = HorizonTestHelper.createDefaultSubscriptionResource(TEST_ENVIRONMENT, getEventType());
+        when(subscriptionCacheMock.getSubscriptionsForEnvironmentAndEventType(TEST_ENVIRONMENT, getEventType())).thenReturn(List.of(subscription));
 
         PublishedEventMessage inboundMessage = getPublishedEventMessage("");
         simulateNewPublishedEvent(inboundMessage);
@@ -141,7 +151,9 @@ class SelectionFilterHandlingTest extends AbstractIntegrationTest {
     @Test
         //Invalid JSON payload should result in DROPPED message when filter IS set
     void invalidJsonPayloadShouldResultInDroppedMessageWhenFilterIsSet() throws JsonProcessingException {
-        addTestSubscription(HorizonTestHelper.getSubscriptionResourceWithSelectionFilter(TEST_ENVIRONMENT, getEventType()));
+
+        var subscription = HorizonTestHelper.getSubscriptionResourceWithSelectionFilter(TEST_ENVIRONMENT, getEventType());
+        when(subscriptionCacheMock.getSubscriptionsForEnvironmentAndEventType(TEST_ENVIRONMENT, getEventType())).thenReturn(List.of(subscription));
 
         String testEvent = """
                 {
@@ -165,7 +177,9 @@ class SelectionFilterHandlingTest extends AbstractIntegrationTest {
     @Test
         //Invalid JSON payload should result in PROCESSED message when filter IS NOT set
     void invalidJsonPayloadShouldResultInProcessedMessageWhenFilterIsNotSet() throws JsonProcessingException {
-        addTestSubscription(createDefaultSubscriptionResource(TEST_ENVIRONMENT, getEventType()));
+
+        var subscription = HorizonTestHelper.createDefaultSubscriptionResource(TEST_ENVIRONMENT, getEventType());
+        when(subscriptionCacheMock.getSubscriptionsForEnvironmentAndEventType(TEST_ENVIRONMENT, getEventType())).thenReturn(List.of(subscription));
 
         String testEvent = """
                 {
