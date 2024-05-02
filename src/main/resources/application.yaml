@@ -10,16 +10,6 @@ logging:
   level:
     root: ${LOG_LEVEL:INFO}
 
-kubernetes:
-  enabled: true
-  #roverToken:
-  #kubeConfigPath:
-  informer:
-    resyncperiod:
-      # 10 minutes
-      ms: 600000
-    namespace: ${GALAXY_INFORMER_NAMESPACE:default}
-
 horizon:
   kafka:
     bootstrapServers: ${GALAXY_KAFKA_BROKERS:kafka:9092}
