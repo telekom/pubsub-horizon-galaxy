@@ -11,6 +11,10 @@ Files: src/test/resources/*
 Copyright: Copyright 2024 Deutsche Telekom IT GmbH
 License: Apache-2.0
 
+Files: .github/assets/*
+Copyright: Copyright 2024 Deutsche Telekom IT GmbH
+License: Apache-2.0
+
 Files: gradle/*
 Copyright: Copyright 2015 the original author or authors.
 License: Apache-2.0
