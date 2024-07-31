@@ -6,6 +6,7 @@ package de.telekom.horizon.galaxy.service;
 
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import de.telekom.eni.pandora.horizon.kubernetes.resource.SubscriptionResource;
 import de.telekom.eni.pandora.horizon.model.event.Event;
 import de.telekom.eni.pandora.horizon.model.event.PublishedEventMessage;
 import de.telekom.eni.pandora.horizon.model.event.Status;
@@ -22,6 +23,7 @@ import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.when;
 
 class RetentionTimeTest extends AbstractIntegrationTest {
 
@@ -40,8 +42,14 @@ class RetentionTimeTest extends AbstractIntegrationTest {
                         )
                 );
         var retentionTimeTopics = Arrays.stream(EventRetentionTime.values()).map(EventRetentionTime::getTopic).collect(Collectors.toSet());
+        var subscriptions =  new ArrayList<SubscriptionResource>();
+
         subscribersToRetentionTimes.forEach(
-                (subscriber, retentionTime) -> addTestSubscription(HorizonTestHelper.createDefaultSubscriptionResourceWithSubscriberId(TEST_ENVIRONMENT, getEventType(), retentionTime, subscriber)));
+                (subscriber, retentionTime) -> {
+                    subscriptions.add(HorizonTestHelper.createDefaultSubscriptionResourceWithSubscriberId(TEST_ENVIRONMENT, getEventType(), retentionTime, subscriber));
+                });
+
+        when(subscriptionCacheMock.getSubscriptionsForEnvironmentAndEventType(TEST_ENVIRONMENT, getEventType())).thenReturn(subscriptions);
 
         final String traceId = UUID.randomUUID().toString();
         final String eventId = UUID.randomUUID().toString();

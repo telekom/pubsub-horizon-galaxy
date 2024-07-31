@@ -8,13 +8,13 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import de.telekom.eni.pandora.horizon.cache.service.DeDuplicationService;
 import de.telekom.eni.pandora.horizon.kubernetes.resource.SubscriptionResource;
-import de.telekom.horizon.galaxy.model.EvaluationResultStatus;
-import de.telekom.horizon.galaxy.utils.AbstractIntegrationTest;
-import de.telekom.horizon.galaxy.utils.HorizonTestHelper;
 import de.telekom.eni.pandora.horizon.model.event.Event;
 import de.telekom.eni.pandora.horizon.model.event.PublishedEventMessage;
 import de.telekom.eni.pandora.horizon.model.event.Status;
 import de.telekom.eni.pandora.horizon.model.event.SubscriptionEventMessage;
+import de.telekom.horizon.galaxy.model.EvaluationResultStatus;
+import de.telekom.horizon.galaxy.utils.AbstractIntegrationTest;
+import de.telekom.horizon.galaxy.utils.HorizonTestHelper;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -25,6 +25,7 @@ import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.when;
 
 class SimpleGalaxyIntegrationTest extends AbstractIntegrationTest {
 
@@ -40,8 +41,8 @@ class SimpleGalaxyIntegrationTest extends AbstractIntegrationTest {
     @Test
     void testDefaultBehaviour() throws InterruptedException, JsonProcessingException {
         //given
-        SubscriptionResource resource = HorizonTestHelper.createDefaultSubscriptionResource(TEST_ENVIRONMENT, getEventType());
-        addTestSubscription(resource);
+        SubscriptionResource subscription = HorizonTestHelper.createDefaultSubscriptionResource(TEST_ENVIRONMENT, getEventType());
+        when(subscriptionCacheMock.getSubscriptionsForEnvironmentAndEventType(TEST_ENVIRONMENT, getEventType())).thenReturn(List.of(subscription));
 
         String traceId = UUID.randomUUID().toString();
         String eventId = UUID.randomUUID().toString();
@@ -87,6 +88,6 @@ class SimpleGalaxyIntegrationTest extends AbstractIntegrationTest {
         assertEquals(EvaluationResultStatus.NO_FILTER, scopeEvaluation);
 
         // atm no other possibility visible to check called track method as to check for isduplicate after simple integration test here
-        assertTrue(deDuplicationService.isDuplicate(message, resource.getSpec().getSubscription().getSubscriptionId()));
+        assertTrue(deDuplicationService.isDuplicate(message, subscription.getSpec().getSubscription().getSubscriptionId()));
     }
 }

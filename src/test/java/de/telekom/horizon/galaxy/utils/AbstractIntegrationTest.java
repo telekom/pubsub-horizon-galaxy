@@ -6,13 +6,14 @@ package de.telekom.horizon.galaxy.utils;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import de.telekom.eni.pandora.horizon.cache.service.JsonCacheService;
 import de.telekom.eni.pandora.horizon.kafka.event.EventWriter;
 import de.telekom.eni.pandora.horizon.kubernetes.resource.SubscriptionResource;
 import de.telekom.eni.pandora.horizon.model.event.Event;
 import de.telekom.eni.pandora.horizon.model.event.PublishedEventMessage;
 import de.telekom.eni.pandora.horizon.model.event.SubscriptionEventMessage;
 import de.telekom.eni.pandora.horizon.model.meta.EventRetentionTime;
-import de.telekom.horizon.galaxy.cache.SubscriptionCache;
+import de.telekom.horizon.galaxy.cache.SubscriberCache;
 import org.apache.commons.codec.digest.DigestUtils;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.jetbrains.annotations.NotNull;
@@ -21,6 +22,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.boot.test.mock.mockito.SpyBean;
 import org.springframework.kafka.core.ConsumerFactory;
 import org.springframework.kafka.listener.ContainerProperties;
 import org.springframework.kafka.listener.KafkaMessageListenerContainer;
@@ -37,6 +40,12 @@ import java.util.concurrent.TimeUnit;
 
 @SpringBootTest
 public abstract class AbstractIntegrationTest {
+
+    @MockBean
+    JsonCacheService<SubscriptionResource> jsonCacheService;
+
+    @SpyBean
+    public SubscriberCache subscriptionCacheMock;
 
     protected final static String TEST_ENVIRONMENT = "playground";
     private final static String TRACING_HEADER_NAME = "x-b3-traceid";
@@ -55,9 +64,6 @@ public abstract class AbstractIntegrationTest {
 
     @Autowired
     private EventWriter eventWriter;
-
-    @Autowired
-    private SubscriptionCache subscriptionCache;
 
     @Autowired
     private ConsumerFactory consumerFactory;
@@ -95,12 +101,6 @@ public abstract class AbstractIntegrationTest {
 
     public void simulateNewPublishedEvent(PublishedEventMessage message) throws JsonProcessingException {
         eventWriter.send(consumingTopic, message);
-    }
-
-    public void addTestSubscription(SubscriptionResource subscriptionResource) {
-        subscriptionCache.add(subscriptionResource.getSpec().getEnvironment(),
-                subscriptionResource.getSpec().getSubscription().getType(),
-                subscriptionResource);
     }
 
     @DynamicPropertySource

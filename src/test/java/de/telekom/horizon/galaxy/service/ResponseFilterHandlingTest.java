@@ -13,14 +13,18 @@ import org.intellij.lang.annotations.Language;
 import org.junit.jupiter.api.Test;
 
 import java.util.LinkedHashMap;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.when;
 
 class ResponseFilterHandlingTest extends AbstractIntegrationTest {
 
     @Test
     void onlyFilteredFieldsShouldBeSent() throws JsonProcessingException {
-        addTestSubscription(HorizonTestHelper.getSubscriptionResourceWithResponseFilter(TEST_ENVIRONMENT, getEventType()));
+        var subscription = HorizonTestHelper.getSubscriptionResourceWithResponseFilter(TEST_ENVIRONMENT, getEventType());
+        when(subscriptionCacheMock.getSubscriptionsForEnvironmentAndEventType(TEST_ENVIRONMENT, getEventType())).thenReturn(List.of(subscription));
+
         @Language("JSON") String testEvent = """
                 {
                     "foo":{
@@ -54,7 +58,11 @@ class ResponseFilterHandlingTest extends AbstractIntegrationTest {
 
     @Test
     void messageShouldBeSentIfAllFieldsAreFiltered() throws JsonProcessingException {
-        addTestSubscription(HorizonTestHelper.getSubscriptionResourceWithResponseFilter(TEST_ENVIRONMENT, getEventType()));
+
+        var subscription = HorizonTestHelper.getSubscriptionResourceWithResponseFilter(TEST_ENVIRONMENT, getEventType());
+        when(subscriptionCacheMock.getSubscriptionsForEnvironmentAndEventType(TEST_ENVIRONMENT, getEventType()))
+                .thenReturn(List.of(subscription));
+
         @Language("JSON") String testEvent = """
                 {
                   "foo": "bar"\s

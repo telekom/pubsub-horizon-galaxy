@@ -10,16 +10,6 @@ logging:
   level:
     root: ${LOG_LEVEL:INFO}
 
-kubernetes:
-  enabled: true
-  #roverToken:
-  #kubeConfigPath:
-  informer:
-    resyncperiod:
-      # 10 minutes
-      ms: 600000
-    namespace: ${GALAXY_INFORMER_NAMESPACE:default}
-
 horizon:
   kafka:
     bootstrapServers: ${GALAXY_KAFKA_BROKERS:kafka:9092}
@@ -42,10 +32,10 @@ horizon:
       type: ${GALAXY_KAFKA_COMPRESSION_TYPE:none}
   cache:
     enabled: true
-    kubernetesServiceDns: ${GALAXY_CACHE_SERVICE_DNS:app-cache-headless.integration.svc.cluster.local}
+    kubernetesServiceDns: ${GALAXY_CACHE_SERVICE_DNS:horizon-quasar-discovery-headless.integration.svc.cluster.local}
     deDuplication:
       enabled: ${GALAXY_CACHE_DE_DUPLICATION_ENABLED:false}
-      defaultCacheName: multiplexer-deduplication
+      defaultCacheName: galaxy-deduplication
 
 pandora:
   tracing:
@@ -57,7 +47,6 @@ galaxy:
   subscription-core-threadpool-size: ${GALAXY_SUBSCRIPTION_CORE_THREADPOOL_SIZE:10}
   subscription-max-threadpool-size: ${GALAXY_SUBSCRIPTION_MAX_THREADPOOL_SIZE:20}
   default-environment: ${GALAXY_DEFAULT_ENVIRONMENT:default}
-
 
 management:
   metrics:

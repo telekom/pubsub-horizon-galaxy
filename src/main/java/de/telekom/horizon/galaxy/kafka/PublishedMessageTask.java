@@ -22,7 +22,7 @@ import de.telekom.eni.pandora.horizon.model.meta.EventRetentionTime;
 import de.telekom.eni.pandora.horizon.model.tracing.Constants;
 import de.telekom.eni.pandora.horizon.tracing.HorizonTracer;
 import de.telekom.horizon.galaxy.cache.PayloadSizeHistogramCache;
-import de.telekom.horizon.galaxy.cache.SubscriptionCache;
+import de.telekom.horizon.galaxy.cache.SubscriberCache;
 import de.telekom.horizon.galaxy.model.EvaluationResultStatus;
 import de.telekom.horizon.galaxy.model.PublishedMessageTaskResult;
 import de.telekom.horizon.galaxy.utils.FilterEventMessageWrapper;
@@ -34,7 +34,10 @@ import org.slf4j.MDC;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 
 import java.util.*;
-import java.util.concurrent.*;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import static de.telekom.eni.pandora.horizon.metrics.HorizonMetricsConstants.METRIC_MULTIPLEXED_EVENTS;
@@ -53,7 +56,7 @@ public class PublishedMessageTask implements Callable<PublishedMessageTaskResult
     private final HorizonTracer tracer;
     private final EventWriter eventWriter;
     private final HorizonMetricsHelper metricsHelper;
-    private final SubscriptionCache subscriptionCache;
+    private final SubscriberCache subscriptionCache;
     private final DeDuplicationService deDuplicationService;
     private PublishedEventMessage publishedEventMessage;
     private final PayloadSizeHistogramCache incomingPayloadSizeCache;
@@ -390,7 +393,7 @@ public class PublishedMessageTask implements Callable<PublishedMessageTaskResult
     /**
      * Retrieves a list of recipients {@link SubscriptionResource} for a given {@link PublishedEventMessage}.
      * <p>
-     * This method queries the {@link SubscriptionCache} to obtain subscriptions associated with the specified environment and event type in the given {@link PublishedEventMessage}.
+     * This method queries the {@link SubscriberCache} to obtain subscriptions associated with the specified environment and event type in the given {@link PublishedEventMessage}.
      * It then filters the subscriptions to exclude duplicates based on the published event message UUID and the SubscriptionId.
      * The resulting list represents unique recipients where the message has not been multiplexed yet.
      *
@@ -403,9 +406,9 @@ public class PublishedMessageTask implements Callable<PublishedMessageTaskResult
      */
     private List<SubscriptionResource> getRecipientsForPublishedEventMessage(PublishedEventMessage publishedEventMessage) {
         String eventType = publishedEventMessage.getEvent().getType();
-        ConcurrentMap<String, SubscriptionResource> subscriptionsForEnvironmentAndType = subscriptionCache.getSubscriptionsForEnvironmentAndEventType(publishedEventMessage.getEnvironment(), eventType);
+        var subscriptionsForEnvironmentAndType = subscriptionCache.getSubscriptionsForEnvironmentAndEventType(publishedEventMessage.getEnvironment(), eventType);
         return subscriptionsForEnvironmentAndType != null ?
-                subscriptionsForEnvironmentAndType.values().stream()
+                subscriptionsForEnvironmentAndType.stream()
                         .filter(subscriptionResource -> !deDuplicationService.isDuplicate(publishedEventMessage, subscriptionResource.getSpec().getSubscription().getSubscriptionId()))
                         .toList() :
                 Collections.emptyList();

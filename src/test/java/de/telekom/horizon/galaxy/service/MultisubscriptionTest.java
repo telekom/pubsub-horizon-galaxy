@@ -6,6 +6,7 @@ package de.telekom.horizon.galaxy.service;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import de.telekom.eni.pandora.horizon.kubernetes.resource.SubscriptionResource;
 import de.telekom.eni.pandora.horizon.model.event.Event;
 import de.telekom.eni.pandora.horizon.model.event.PublishedEventMessage;
 import de.telekom.eni.pandora.horizon.model.event.Status;
@@ -21,6 +22,7 @@ import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.when;
 
 class MultisubscriptionTest extends AbstractIntegrationTest {
 
@@ -34,7 +36,14 @@ class MultisubscriptionTest extends AbstractIntegrationTest {
     void testMultiSubscription() throws InterruptedException, JsonProcessingException {
         //given
         Set<String> subscriberIds = new HashSet<>(Arrays.asList("#1", "#2", "#3", "#4", "#5", "#6"));
-        subscriberIds.forEach(s -> addTestSubscription(HorizonTestHelper.createDefaultSubscriptionResourceWithSubscriberId(TEST_ENVIRONMENT, getEventType(), s)));
+        var subscriptions =  new ArrayList<SubscriptionResource>();
+
+        subscriberIds.forEach(
+                id -> {
+                    subscriptions.add(HorizonTestHelper.createDefaultSubscriptionResourceWithSubscriberId(TEST_ENVIRONMENT, getEventType(), id));
+                });
+
+        when(subscriptionCacheMock.getSubscriptionsForEnvironmentAndEventType(TEST_ENVIRONMENT, getEventType())).thenReturn(subscriptions);
 
         String traceId = UUID.randomUUID().toString();
         String eventId = UUID.randomUUID().toString();
