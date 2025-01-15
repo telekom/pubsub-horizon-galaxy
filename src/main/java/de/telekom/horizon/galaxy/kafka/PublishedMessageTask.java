@@ -377,13 +377,14 @@ public class PublishedMessageTask implements Callable<PublishedMessageTaskResult
         Map<String, FilterEventMessageWrapper> filteredEventMessagesPerRecipient = new HashMap<>();
         try {
             Object eventData = publishedEventMessage.getEvent().getData();
+            JsonNode jsonEventDataOrNull = null;
 
-            if (eventData != null) {
-                JsonNode jsonEventDataOrNull = parseEventData(eventData);
-                filteredEventMessagesPerRecipient = Filters.filterDataForRecipients(recipients, jsonEventDataOrNull);
-            } else {
-                log.info("No payload found in event. Skipping filter application.");
+            var dataContentType = publishedEventMessage.getEvent().getDataContentType();
+            if (eventData != null && (dataContentType == null || "application/json".equals(dataContentType))) {
+                jsonEventDataOrNull = parseEventData(eventData);
             }
+
+            filteredEventMessagesPerRecipient = Filters.filterDataForRecipients(recipients, jsonEventDataOrNull);
         } finally {
             filterSpan.finish();
         }
