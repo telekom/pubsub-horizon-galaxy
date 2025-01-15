@@ -474,7 +474,9 @@ public class PublishedMessageTask implements Callable<PublishedMessageTaskResult
 
             //If response filter was applied use stripped data
             String subscriptionId = recipient.getSpec().getSubscription().getSubscriptionId();
-            if (filteredEventDataPerSubscriptionId.get(subscriptionId).getEvaluationResultStatus() != EvaluationResultStatus.NO_FILTER) {
+            var evaluationStatus = filteredEventDataPerSubscriptionId.get(subscriptionId).getEvaluationResultStatus();
+
+            if (evaluationStatus == EvaluationResultStatus.MATCH) {
                 eventCopy.setData(filteredEventDataPerSubscriptionId.get(subscriptionId).getFilteredPayload());
             }
 
