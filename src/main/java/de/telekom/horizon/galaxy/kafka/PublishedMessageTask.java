@@ -39,6 +39,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.regex.Pattern;
 
 import static de.telekom.eni.pandora.horizon.metrics.HorizonMetricsConstants.METRIC_MULTIPLEXED_EVENTS;
 
@@ -377,13 +378,16 @@ public class PublishedMessageTask implements Callable<PublishedMessageTaskResult
         Map<String, FilterEventMessageWrapper> filteredEventMessagesPerRecipient = new HashMap<>();
         try {
             Object eventData = publishedEventMessage.getEvent().getData();
+            JsonNode jsonEventDataOrNull = null;
 
-            if (eventData != null) {
-                JsonNode jsonEventDataOrNull = parseEventData(eventData);
-                filteredEventMessagesPerRecipient = Filters.filterDataForRecipients(recipients, jsonEventDataOrNull);
-            } else {
-                log.info("No payload found in event. Skipping filter application.");
+            var dataContentType = publishedEventMessage.getEvent().getDataContentType();
+            var jsonMediaTypeRegexPattern = Pattern.compile("^application/(?:[a-zA-Z0-9]+\\+)?json$", Pattern.CASE_INSENSITIVE);
+
+            if (eventData != null && (dataContentType == null || jsonMediaTypeRegexPattern.matcher(dataContentType.trim()).matches())) {
+                jsonEventDataOrNull = parseEventData(eventData);
             }
+
+            filteredEventMessagesPerRecipient = Filters.filterDataForRecipients(recipients, jsonEventDataOrNull);
         } finally {
             filterSpan.finish();
         }
@@ -473,7 +477,9 @@ public class PublishedMessageTask implements Callable<PublishedMessageTaskResult
 
             //If response filter was applied use stripped data
             String subscriptionId = recipient.getSpec().getSubscription().getSubscriptionId();
-            if (filteredEventDataPerSubscriptionId.get(subscriptionId).getEvaluationResultStatus() != EvaluationResultStatus.NO_FILTER) {
+            var evaluationStatus = filteredEventDataPerSubscriptionId.get(subscriptionId).getEvaluationResultStatus();
+
+            if (evaluationStatus == EvaluationResultStatus.MATCH) {
                 eventCopy.setData(filteredEventDataPerSubscriptionId.get(subscriptionId).getFilteredPayload());
             }
 
