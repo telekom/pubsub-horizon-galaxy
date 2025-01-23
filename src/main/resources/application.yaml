@@ -6,11 +6,9 @@ spring:
   application:
     name: Horizon Galaxy
 
-  lifecycle:
-    timeout-per-shutdown-phase: 10s
-
 server:
-  shutdown: graceful
+  # Galaxy's webserver can be shut down immediately since it does not handle any customer requests
+  shutdown: immediate
 
 logging:
   level:
@@ -66,7 +64,7 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info,prometheus,heapdump,shutdown,horizon-prestop
+        include: health,info,prometheus,heapdump,shutdown
   endpoint:
     health:
       show-details: always

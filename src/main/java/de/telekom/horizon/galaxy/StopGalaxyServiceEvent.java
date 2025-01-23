@@ -8,10 +8,10 @@ import lombok.Getter;
 import org.springframework.context.ApplicationEvent;
 
 @Getter
-public class StopMessageListenerEvent extends ApplicationEvent {
+public class StopGalaxyServiceEvent extends ApplicationEvent {
     private final String message;
 
-    public StopMessageListenerEvent(Object source, String message) {
+    public StopGalaxyServiceEvent(Object source, String message) {
         super(source);
         this.message = message;
     }

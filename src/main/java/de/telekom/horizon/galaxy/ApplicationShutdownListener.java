@@ -19,8 +19,8 @@ public class ApplicationShutdownListener implements ApplicationListener<ContextC
      */
     @Override
     public void onApplicationEvent(ContextClosedEvent event) {
-        var message = "Got PreStop request. Stop listening for messages...";
+        var message = "Got shutdown event. Stopping Horizon Galaxy...";
 
-        applicationEventPublisher.publishEvent(new StopMessageListenerEvent(this, message));
+        applicationEventPublisher.publishEvent(new StopGalaxyServiceEvent(this, message));
     }
 }
