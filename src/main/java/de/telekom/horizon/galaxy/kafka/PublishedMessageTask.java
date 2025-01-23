@@ -381,7 +381,7 @@ public class PublishedMessageTask implements Callable<PublishedMessageTaskResult
             JsonNode jsonEventDataOrNull = null;
 
             var dataContentType = publishedEventMessage.getEvent().getDataContentType();
-            var jsonMediaTypeRegexPattern = Pattern.compile("^application/(?:[a-zA-Z0-9]+\\+)?json(;.*)?", Pattern.CASE_INSENSITIVE);
+            var jsonMediaTypeRegexPattern = Pattern.compile("^application/(?:[a-zA-Z0-9]+\\+)?json.*", Pattern.CASE_INSENSITIVE);
 
             if (eventData != null && (dataContentType == null || jsonMediaTypeRegexPattern.matcher(dataContentType.trim()).matches())) {
                 jsonEventDataOrNull = parseEventData(eventData);
