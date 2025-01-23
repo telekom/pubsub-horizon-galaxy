@@ -16,6 +16,8 @@ import org.springframework.context.annotation.Configuration;
 @Setter
 public class GalaxyConfig {
 
+    private int preStopWaitTimeInSeconds = 10;
+
     private int batchCoreThreadPoolSize;
 
     private int batchMaxThreadPoolSize;

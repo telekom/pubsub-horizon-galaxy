@@ -4,10 +4,11 @@
 
 package de.telekom.horizon.galaxy.service;
 
+import de.telekom.horizon.galaxy.StopMessageListenerEvent;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.SpringApplication;
-import org.springframework.context.ApplicationContext;
+import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.context.event.EventListener;
 import org.springframework.kafka.event.ContainerStoppedEvent;
 import org.springframework.kafka.listener.ConcurrentMessageListenerContainer;
@@ -19,10 +20,10 @@ public class GalaxyService {
 
     private final ConcurrentMessageListenerContainer<String, String> messageListenerContainer;
 
-    private final ApplicationContext context;
+    private final ConfigurableApplicationContext context;
 
     public GalaxyService(ConcurrentMessageListenerContainer<String, String> messageListenerContainer,
-                         ApplicationContext context) {
+                         ConfigurableApplicationContext context) {
         this.messageListenerContainer = messageListenerContainer;
         this.context = context;
     }
@@ -36,12 +37,27 @@ public class GalaxyService {
         }
     }
 
-    @EventListener
-    public void containerStoppedHandler(ContainerStoppedEvent event) {
-        log.error("MessageListenerContainer stopped with event {}. Exiting...", event.toString());
-        if (messageListenerContainer != null) {
+    /**
+     * Handles the requested termination of the message listener container
+     */
+    @EventListener(value = {StopMessageListenerEvent.class})
+    public void onStopMessageListenerEvent() {
+        if (messageListenerContainer != null && messageListenerContainer.isRunning()) {
             messageListenerContainer.stop();
         }
-        SpringApplication.exit(context, () -> -2);
+    }
+
+    /**
+     * Will be invoked when the message listener container stopped.
+     * If the application is not shutting down already, exit immediately.
+     */
+    @EventListener(value = {ContainerStoppedEvent.class})
+    public void containerStoppedHandler() {
+        if (!context.isClosed()) {
+            log.error("MessageListenerContainer stopped unexpectedly. Exiting now...");
+            System.exit(SpringApplication.exit(context, () -> 1));
+        } else {
+            log.warn("MessageListenerContainer stopped due to application shutdown event.");
+        }
     }
 }
