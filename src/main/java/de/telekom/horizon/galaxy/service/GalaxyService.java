@@ -61,10 +61,10 @@ public class GalaxyService {
     @EventListener(value = {ContainerStoppedEvent.class})
     public void containerStoppedHandler() {
         if (!context.isClosed()) {
-            log.error("MessageListenerContainer stopped unexpectedly. Exiting in {} seconds...", config.getPreStopWaitTimeInSeconds());
+            log.error("MessageListenerContainer stopped unexpectedly. Exiting in {} seconds...", config.getShutdownWaitTimeSeconds());
             // wait for some time for ongoing message processing to finish
             try {
-                Thread.sleep(Instant.ofEpochSecond(config.getPreStopWaitTimeInSeconds()).toEpochMilli());
+                Thread.sleep(Instant.ofEpochSecond(config.getShutdownWaitTimeSeconds()).toEpochMilli());
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
             }
