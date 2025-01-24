@@ -6,9 +6,14 @@ spring:
   application:
     name: Horizon Galaxy
 
+  lifecycle:
+    # if we get a SIGTERM, still allow web server requests for x seconds
+    # to ensure lifeness probes / health checks still succeed while we are processing shutdown tasks
+    # This should be greater or equals the shutdown wait time
+    timeout-per-shutdown-phase: 10s
+
 server:
-  # Galaxy's webserver can be shut down immediately since it does not handle any customer requests
-  shutdown: immediate
+  shutdown: graceful
 
 logging:
   level:
@@ -64,7 +69,7 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info,prometheus,heapdump,shutdown
+        include: health,info,prometheus,heapdump,shutdown,horizon-prestop
   endpoint:
     health:
       show-details: always
