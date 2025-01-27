@@ -13,6 +13,7 @@ import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.context.event.EventListener;
 import org.springframework.kafka.event.ContainerStoppedEvent;
 import org.springframework.kafka.listener.ConcurrentMessageListenerContainer;
+import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
@@ -66,7 +67,7 @@ public class GalaxyService {
      */
     @EventListener(value = {ContainerStoppedEvent.class})
     public void containerStoppedHandler() {
-        gracefulShutdown();
+        gracefulShutdown(() -> log.warn("Exiting application now"));
     }
 
     /**
@@ -75,8 +76,9 @@ public class GalaxyService {
      * The method checks whether the application's context already has been closed. Depending on the outcome
      * the shutdown will be handled either as expected or unexpected.
      *
+     * @param action runnable action to be called before exiting
      */
-    private void gracefulShutdown() {
+    private void gracefulShutdown(@Nullable Runnable action) {
         var isContextClosed = context.isClosed();
 
         if (isContextClosed) {
@@ -90,6 +92,10 @@ public class GalaxyService {
             Thread.sleep(Instant.ofEpochSecond(config.getShutdownWaitTimeSeconds()).toEpochMilli());
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
+        }
+
+        if (action != null) {
+            action.run();
         }
 
         System.exit(SpringApplication.exit(context, () -> isContextClosed ? 0 : 1));
