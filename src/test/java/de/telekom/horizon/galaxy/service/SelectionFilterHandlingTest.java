@@ -11,10 +11,12 @@ import de.telekom.eni.pandora.horizon.model.event.PublishedEventMessage;
 import de.telekom.eni.pandora.horizon.model.event.Status;
 import de.telekom.horizon.galaxy.model.EvaluationResultStatus;
 import de.telekom.horizon.galaxy.utils.AbstractIntegrationTest;
+import de.telekom.horizon.galaxy.utils.HazelcastTestInstance;
 import de.telekom.horizon.galaxy.utils.HorizonTestHelper;
 import de.telekom.jsonfilter.operator.comparison.GreaterEqualOperator;
 import de.telekom.jsonfilter.operator.logic.AndOperator;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -24,6 +26,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.mockito.Mockito.when;
 
+@ExtendWith(HazelcastTestInstance.class)
 class SelectionFilterHandlingTest extends AbstractIntegrationTest {
 
     @Test

@@ -8,8 +8,10 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import de.telekom.eni.pandora.horizon.model.event.Event;
 import de.telekom.eni.pandora.horizon.model.event.PublishedEventMessage;
 import de.telekom.horizon.galaxy.utils.AbstractIntegrationTest;
+import de.telekom.horizon.galaxy.utils.HazelcastTestInstance;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 
 import java.util.List;
 import java.util.Map;
@@ -18,7 +20,7 @@ import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertNull;
 
-
+@ExtendWith(HazelcastTestInstance.class)
 class EmptyRecipientsTest extends AbstractIntegrationTest {
 
     private final static String TEST_ENVIRONMENT = "playground";
