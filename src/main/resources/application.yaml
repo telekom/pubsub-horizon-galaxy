@@ -66,6 +66,9 @@ management:
       show-details: always
     shutdown:
       enabled: true
+  health:
+    hazelcast:
+      enabled: false
   zipkin:
     tracing:
       endpoint: ${JAEGER_COLLECTOR_URL:http://jaeger-collector.example.com:9411}
