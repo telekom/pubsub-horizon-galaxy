@@ -36,6 +36,11 @@ horizon:
     deDuplication:
       enabled: ${GALAXY_CACHE_DE_DUPLICATION_ENABLED:false}
       defaultCacheName: galaxy-deduplication
+  mongo:
+    enabled: ${GALAXY_MONGO_ENABLED:true}
+    url: ${GALAXY_MONGO_URL:mongodb://root:root@localhost:27017}
+    database: ${GALAXY_MONGO_DATABASE:horizon-config}
+    collection: ${GALAXY_MONGO_COLLECTION:eventSubscriptions}
 
 pandora:
   tracing:
@@ -68,6 +73,8 @@ management:
       enabled: true
   health:
     hazelcast:
+      enabled: false
+    mongo:
       enabled: false
   zipkin:
     tracing:
