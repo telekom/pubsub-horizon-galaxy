@@ -40,7 +40,7 @@ horizon:
     enabled: ${GALAXY_MONGO_ENABLED:true}
     url: ${GALAXY_MONGO_URL:mongodb://root:root@localhost:27017}
     databases:
-      configTimeDatabase: ${HORIZON_MONGO_CONFIG_DATABASE:horizon-config}
+      configTimeDatabase: ${GALAXY_MONGO_CONFIG_DATABASE:horizon-config}
     collection: ${GALAXY_MONGO_COLLECTION:eventSubscriptions}
 
 pandora:
