@@ -45,7 +45,7 @@ public class SubscriptionCountGaugeCache {
         return Tags.of(
                 TAG_ENVIRONMENT, environment,
                 TAG_EVENT_TYPE, resource.getSpec().getSubscription().getType(),
-                TAG_DELIVERY_TYPE, resource.getSpec().getSubscription().getDeliveryType().equalsIgnoreCase("callback") ? "callback" : "sse",
+                TAG_DELIVERY_TYPE, resource.getSpec().getSubscription().getDeliveryType().equalsIgnoreCase("callback") ? "callback" : "server_sent_event",
                 TAG_SUBSCRIBER_ID, resource.getSpec().getSubscription().getSubscriberId());
     }
 
