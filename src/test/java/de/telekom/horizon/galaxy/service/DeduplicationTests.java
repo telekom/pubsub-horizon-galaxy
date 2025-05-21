@@ -11,14 +11,17 @@ import de.telekom.eni.pandora.horizon.model.event.Event;
 import de.telekom.eni.pandora.horizon.model.event.PublishedEventMessage;
 import de.telekom.eni.pandora.horizon.model.event.SubscriptionEventMessage;
 import de.telekom.horizon.galaxy.utils.AbstractIntegrationTest;
+import de.telekom.horizon.galaxy.utils.HazelcastTestInstance;
 import de.telekom.horizon.galaxy.utils.HorizonTestHelper;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.beans.factory.annotation.Autowired;
 
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+@ExtendWith(HazelcastTestInstance.class)
 public class DeduplicationTests extends AbstractIntegrationTest {
 
     @Autowired

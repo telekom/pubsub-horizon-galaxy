@@ -224,8 +224,8 @@ public class PublishedMessageTask implements Callable<PublishedMessageTaskResult
                 sendFailedStatusMessage(subscriptionEventMessage);
                 trackEventForDeduplication(subscriptionEventMessage);
             } finally {
-
-                metricsHelper.getRegistry().counter(METRIC_MULTIPLEXED_EVENTS, metricsHelper.buildTagsFromSubscriptionEventMessage(subscriptionEventMessage)).increment();
+                var tags = metricsHelper.buildTagsFromSubscriptionEventMessage(subscriptionEventMessage);
+                metricsHelper.getRegistry().counter(METRIC_MULTIPLEXED_EVENTS, tags).increment();
                 multiplexSpan.finish();
 
                 MDC.clear();

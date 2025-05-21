@@ -36,6 +36,12 @@ horizon:
     deDuplication:
       enabled: ${GALAXY_CACHE_DE_DUPLICATION_ENABLED:false}
       defaultCacheName: galaxy-deduplication
+  mongo:
+    enabled: ${GALAXY_MONGO_ENABLED:true}
+    url: ${GALAXY_MONGO_URL:mongodb://root:root@localhost:27017}
+    databases:
+      configTimeDatabase: ${GALAXY_MONGO_CONFIG_DATABASE:horizon-config}
+    collection: ${GALAXY_MONGO_COLLECTION:eventSubscriptions}
 
 pandora:
   tracing:
@@ -66,6 +72,11 @@ management:
       show-details: always
     shutdown:
       enabled: true
+  health:
+    hazelcast:
+      enabled: false
+    mongo:
+      enabled: false
   zipkin:
     tracing:
       endpoint: ${JAEGER_COLLECTOR_URL:http://jaeger-collector.example.com:9411}

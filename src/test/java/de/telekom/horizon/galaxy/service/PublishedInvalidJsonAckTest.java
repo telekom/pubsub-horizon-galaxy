@@ -5,8 +5,10 @@
 package de.telekom.horizon.galaxy.service;
 
 import de.telekom.horizon.galaxy.utils.AbstractIntegrationTest;
+import de.telekom.horizon.galaxy.utils.HazelcastTestInstance;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.kafka.core.KafkaTemplate;
@@ -15,6 +17,7 @@ import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertNull;
 
+@ExtendWith(HazelcastTestInstance.class)
 class PublishedInvalidJsonAckTest extends AbstractIntegrationTest {
 
 
