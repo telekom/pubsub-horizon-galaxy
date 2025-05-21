@@ -42,6 +42,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.Pattern;
 
 import static de.telekom.eni.pandora.horizon.metrics.HorizonMetricsConstants.METRIC_MULTIPLEXED_EVENTS;
+import static de.telekom.eni.pandora.horizon.metrics.HorizonMetricsConstants.TAG_CALLBACK_URL;
 
 /**
  * The {@code PublishedMessageTask} class is responsible for handling a single {@link PublishedEventMessage}.
@@ -224,8 +225,12 @@ public class PublishedMessageTask implements Callable<PublishedMessageTaskResult
                 sendFailedStatusMessage(subscriptionEventMessage);
                 trackEventForDeduplication(subscriptionEventMessage);
             } finally {
+                var tags = metricsHelper.buildTagsFromSubscriptionEventMessage(subscriptionEventMessage);
+                if (subscriptionEventMessage.getDeliveryType().equals(DeliveryType.SERVER_SENT_EVENT)) {
+                    tags = tags.and(TAG_CALLBACK_URL, "none");
+                }
 
-                metricsHelper.getRegistry().counter(METRIC_MULTIPLEXED_EVENTS, metricsHelper.buildTagsFromSubscriptionEventMessage(subscriptionEventMessage)).increment();
+                metricsHelper.getRegistry().counter(METRIC_MULTIPLEXED_EVENTS, tags).increment();
                 multiplexSpan.finish();
 
                 MDC.clear();
