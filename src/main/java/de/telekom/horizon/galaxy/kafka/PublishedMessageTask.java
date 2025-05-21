@@ -226,10 +226,6 @@ public class PublishedMessageTask implements Callable<PublishedMessageTaskResult
                 trackEventForDeduplication(subscriptionEventMessage);
             } finally {
                 var tags = metricsHelper.buildTagsFromSubscriptionEventMessage(subscriptionEventMessage);
-                if (subscriptionEventMessage.getDeliveryType().equals(DeliveryType.SERVER_SENT_EVENT)) {
-                    tags = tags.and(TAG_CALLBACK_URL, "none");
-                }
-
                 metricsHelper.getRegistry().counter(METRIC_MULTIPLEXED_EVENTS, tags).increment();
                 multiplexSpan.finish();
 
