@@ -42,7 +42,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.Pattern;
 
 import static de.telekom.eni.pandora.horizon.metrics.HorizonMetricsConstants.METRIC_MULTIPLEXED_EVENTS;
-import static de.telekom.eni.pandora.horizon.metrics.HorizonMetricsConstants.TAG_CALLBACK_URL;
 
 /**
  * The {@code PublishedMessageTask} class is responsible for handling a single {@link PublishedEventMessage}.

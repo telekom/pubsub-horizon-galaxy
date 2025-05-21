@@ -4,7 +4,6 @@
 
 package de.telekom.horizon.galaxy.service;
 
-import com.hazelcast.core.HazelcastInstance;
 import de.telekom.eni.pandora.horizon.cache.service.DeDuplicationService;
 import de.telekom.eni.pandora.horizon.kubernetes.resource.SubscriptionResource;
 import de.telekom.eni.pandora.horizon.model.event.DeliveryType;
