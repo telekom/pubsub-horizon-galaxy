@@ -39,9 +39,10 @@ public class PublishedMessageTaskFactory {
     private final PayloadSizeHistogramCache outgoingPayloadSizeHistogramCache;
     private final GalaxyConfig galaxyConfig;
     private final ObjectMapper objectMapper;
+    private final HorizonMetricsHelper horizonMetricsHelper;
 
     @Autowired
-    public PublishedMessageTaskFactory(HorizonTracer tracer, EventWriter eventWriter, HorizonMetricsHelper metricsHelper, SubscriberCache subscriptionCache, DeDuplicationService deDuplicationService, KafkaProperties kafkaProperties, @Qualifier("incomingPayloadSizeCache") PayloadSizeHistogramCache incomingPayloadSizeCache, @Qualifier("outgoingPayloadSizeCache") PayloadSizeHistogramCache outgoingPayloadSizeHistogramCache, GalaxyConfig galaxyConfig, ObjectMapper objectMapper) {
+    public PublishedMessageTaskFactory(HorizonTracer tracer, EventWriter eventWriter, HorizonMetricsHelper metricsHelper, SubscriberCache subscriptionCache, DeDuplicationService deDuplicationService, KafkaProperties kafkaProperties, @Qualifier("incomingPayloadSizeCache") PayloadSizeHistogramCache incomingPayloadSizeCache, @Qualifier("outgoingPayloadSizeCache") PayloadSizeHistogramCache outgoingPayloadSizeHistogramCache, GalaxyConfig galaxyConfig, ObjectMapper objectMapper, HorizonMetricsHelper horizonMetricsHelper) {
         this.tracer = tracer;
         this.eventWriter = eventWriter;
         this.metricsHelper = metricsHelper;
@@ -52,9 +53,10 @@ public class PublishedMessageTaskFactory {
         this.outgoingPayloadSizeHistogramCache = outgoingPayloadSizeHistogramCache;
         this.galaxyConfig = galaxyConfig;
         this.objectMapper = objectMapper;
+        this.horizonMetricsHelper = horizonMetricsHelper;
     }
 
     public PublishedMessageTask newTask(ConsumerRecord<String, String> consumerRecord) {
-        return new PublishedMessageTask(consumerRecord, this);
+        return new PublishedMessageTask(consumerRecord, this, horizonMetricsHelper);
     }
 }

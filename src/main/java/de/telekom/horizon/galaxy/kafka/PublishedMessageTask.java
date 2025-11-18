@@ -27,6 +27,7 @@ import de.telekom.horizon.galaxy.model.EvaluationResultStatus;
 import de.telekom.horizon.galaxy.model.PublishedMessageTaskResult;
 import de.telekom.horizon.galaxy.utils.FilterEventMessageWrapper;
 import de.telekom.horizon.galaxy.utils.Filters;
+import io.micrometer.core.instrument.binder.jvm.ExecutorServiceMetrics;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.jetbrains.annotations.NotNull;
@@ -62,10 +63,11 @@ public class PublishedMessageTask implements Callable<PublishedMessageTaskResult
     private PublishedEventMessage publishedEventMessage;
     private final PayloadSizeHistogramCache incomingPayloadSizeCache;
     private final PayloadSizeHistogramCache outgoingPayloadSizeHistogramCache;
+    private final HorizonMetricsHelper horizonMetricsHelper;
 
     private final ThreadPoolTaskExecutor taskExecutor;
 
-    public PublishedMessageTask(ConsumerRecord<String, String> consumerRecord, PublishedMessageTaskFactory factory) {
+    public PublishedMessageTask(ConsumerRecord<String, String> consumerRecord, PublishedMessageTaskFactory factory, HorizonMetricsHelper horizonMetricsHelper) {
         this.consumerRecord = consumerRecord;
 
         this.tracer = factory.getTracer();
@@ -76,6 +78,7 @@ public class PublishedMessageTask implements Callable<PublishedMessageTaskResult
         this.incomingPayloadSizeCache = factory.getIncomingPayloadSizeCache();
         this.outgoingPayloadSizeHistogramCache = factory.getOutgoingPayloadSizeHistogramCache();
         this.objectMapper = factory.getObjectMapper();
+        this.horizonMetricsHelper = horizonMetricsHelper;
 
         taskExecutor = initThreadPoolTaskExecutor(factory);
     }
@@ -89,6 +92,11 @@ public class PublishedMessageTask implements Callable<PublishedMessageTaskResult
         threadPoolTaskExecutor.setMaxPoolSize(factory.getGalaxyConfig().getSubscriptionMaxThreadPoolSize());
         threadPoolTaskExecutor.setRejectedExecutionHandler(new ThreadPoolExecutor.CallerRunsPolicy());
         threadPoolTaskExecutor.afterPropertiesSet();
+
+        var executor = threadPoolTaskExecutor.getThreadPoolExecutor();
+        var metrics = new ExecutorServiceMetrics(executor, "multiplex", null);
+        metrics.bindTo(horizonMetricsHelper.getRegistry());
+
         return threadPoolTaskExecutor;
     }
 
