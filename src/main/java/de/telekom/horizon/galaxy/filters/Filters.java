@@ -2,11 +2,12 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-package de.telekom.horizon.galaxy.utils;
+package de.telekom.horizon.galaxy.filters;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.jayway.jsonpath.JsonPathException;
 import de.telekom.eni.pandora.horizon.kubernetes.resource.Subscription;
 import de.telekom.eni.pandora.horizon.kubernetes.resource.SubscriptionResource;
 import de.telekom.eni.pandora.horizon.kubernetes.resource.SubscriptionTrigger;
@@ -20,6 +21,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.tuple.ImmutablePair;
 
 import java.util.*;
+
+import static de.telekom.horizon.galaxy.filters.JsonPathFilters.applyJsonPathResponseFilter;
 
 /**
  * Utility class responsible for filtering data for recipients based on
@@ -119,7 +122,17 @@ public class Filters {
 
         var selectionResult = applySelectionFilter(trigger.getSelectionFilter(), trigger.getAdvancedSelectionFilter(), jsonEventData);
         if (selectionResult.isMatch()) {
-            return new ImmutablePair<>(selectionResult, applyResponseFilter(trigger.getResponseFilter(),trigger.getResponseFilterMode() ,jsonEventData));
+            var filteredResponse = jsonEventData;
+            try {
+                filteredResponse = applyJsonPathResponseFilter(trigger.getResponseFilter(),trigger.getResponseFilterMode() ,filteredResponse);
+            } catch (JsonPathException ex) {
+                log.warn("Could not apply jsonpath response-filter. Falling back to jsonpointer filter...", ex);
+                filteredResponse = applyResponseFilter(trigger.getResponseFilter(),trigger.getResponseFilterMode() ,jsonEventData);
+            } catch (Exception ex) {
+                log.warn("Unexpected error file applying jsonpath response-filter", ex);
+            }
+
+            return new ImmutablePair<>(selectionResult, filteredResponse);
         }
 
         return new ImmutablePair<>(selectionResult, null);
