@@ -6,95 +6,74 @@ package de.telekom.horizon.galaxy.filters;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.jayway.jsonpath.Configuration;
-import com.jayway.jsonpath.DocumentContext;
-import com.jayway.jsonpath.JsonPath;
-import com.jayway.jsonpath.Option;
+import com.jayway.jsonpath.*;
 import com.jayway.jsonpath.spi.mapper.JacksonMappingProvider;
 import de.telekom.eni.pandora.horizon.kubernetes.resource.SubscriptionTrigger.ResponseFilterMode;
+import lombok.extern.slf4j.Slf4j;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
-import java.util.Optional;
 
+@Slf4j
 public class JsonPathFilters {
 
-    private static ObjectMapper objectMapper;
-
-    private static Configuration jsonPathConfig;
+    private static final ObjectMapper objectMapper = new ObjectMapper();
 
     public static JsonNode applyJsonPathResponseFilter(
             List<String> responseFilter,
-            ResponseFilterMode mode,
+            ResponseFilterMode filterMode,
             JsonNode jsonEventData
     ) {
         if (Objects.isNull(responseFilter)) {
             return jsonEventData;
         }
 
-        var filterMode = Optional.ofNullable(mode).orElse(ResponseFilterMode.INCLUDE);
-        var jsonNode = getObjectMapper().createObjectNode();
-
-        DocumentContext eventCtx;
-        DocumentContext filteredCtx;
-
-        switch (filterMode) {
-
-            case INCLUDE:
-                eventCtx = JsonPath.using(getJsonPathConfig()).parse(jsonEventData);
-                filteredCtx = JsonPath.using(getJsonPathConfig()).parse(jsonNode);
-
-                for (var path : responseFilter) {
-                    var pathValue = eventCtx.read(path);
-                    if (Objects.nonNull(pathValue)) {
-                        String targetPath = getTargetPath(path);
-                        ensureParentPathExists(filteredCtx, targetPath);
-                        
-                        if (isFilterExpression(path)) {
-                            filteredCtx = filteredCtx.set(targetPath, pathValue);
-                        } else {
-                            filteredCtx = filteredCtx.set(path, pathValue);
-                        }
-                    }
-                }
-
-                return filteredCtx.json();
-
-            case EXCLUDE:
-                jsonNode = jsonEventData.deepCopy();
-                filteredCtx = JsonPath.using(getJsonPathConfig()).parse(jsonNode);
-                responseFilter.forEach(filteredCtx::delete);
-                return filteredCtx.json();
-
-            default:
-                throw new RuntimeException("Unsupported response filter mode " + mode);
-
-        }
-    }
-
-    private static ObjectMapper getObjectMapper() {
-        if (objectMapper != null) {
-            return objectMapper;
-        }
-
-        objectMapper = new ObjectMapper();
-        return objectMapper;
-    }
-
-    private static Configuration getJsonPathConfig() {
-        if (jsonPathConfig != null) {
-            return jsonPathConfig;
-        }
-
-        jsonPathConfig = Configuration.defaultConfiguration()
+        var parseCtx = JsonPath.using(Configuration.defaultConfiguration()
                 .jsonProvider(new JsonPathJacksonJsonProvider())
                 .mappingProvider(new JacksonMappingProvider())
                 .setOptions(
                         Option.SUPPRESS_EXCEPTIONS,
                         Option.DEFAULT_PATH_LEAF_TO_NULL
-                );
+                ));
 
-        return jsonPathConfig;
+        return switch (filterMode) {
+            case INCLUDE -> applyIncludeFilter(parseCtx, responseFilter, jsonEventData);
+            case EXCLUDE -> applyExcludeFilter(parseCtx, responseFilter, jsonEventData);
+            case null -> {
+                log.warn("response filter mode is null, defaulting to INCLUDE");
+                yield applyIncludeFilter(parseCtx, responseFilter, jsonEventData);
+            }
+        };
+    }
+
+    private static JsonNode applyIncludeFilter(ParseContext parseCtx, List<String> responseFilter, JsonNode data) {
+        var eventCtx = parseCtx.parse(data);
+        var filteredCtx = parseCtx.parse(objectMapper.createObjectNode());
+
+        for (var path : responseFilter) {
+            var pathValue = eventCtx.read(path);
+            if (Objects.nonNull(pathValue)) {
+                String targetPath = getTargetPath(path);
+                ensureParentPathExists(filteredCtx, targetPath);
+
+                if (isFilterExpression(path)) {
+                    filteredCtx = filteredCtx.set(targetPath, pathValue);
+                } else {
+                    filteredCtx = filteredCtx.set(path, pathValue);
+                }
+            }
+        }
+
+        return filteredCtx.json();
+    }
+
+    private static JsonNode applyExcludeFilter(ParseContext parseCtx, List<String> responseFilter, JsonNode data) {
+        var jsonNode = data.deepCopy();
+        var filteredCtx = parseCtx.parse(jsonNode);
+        responseFilter.forEach(filteredCtx::delete);
+
+        return filteredCtx.json();
     }
 
     private static boolean isFilterExpression(String path) {
@@ -125,7 +104,7 @@ public class JsonPathFilters {
     private static void ensureParentPathExists(DocumentContext ctx, String path) {
         String pathWithoutRoot = path.startsWith("$.") ? path.substring(2) : path;
 
-        List<String> parts = new java.util.ArrayList<>();
+        List<String> parts = new ArrayList<>();
         StringBuilder current = new StringBuilder();
         int bracketDepth = 0;
         
@@ -159,7 +138,7 @@ public class JsonPathFilters {
             
             Object existing = ctx.read(currentPath.toString());
             if (existing == null) {
-                ctx.set(currentPath.toString(), getObjectMapper().createObjectNode());
+                ctx.set(currentPath.toString(), objectMapper.createObjectNode());
             }
         }
     }

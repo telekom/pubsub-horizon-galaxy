@@ -122,17 +122,16 @@ public class Filters {
 
         var selectionResult = applySelectionFilter(trigger.getSelectionFilter(), trigger.getAdvancedSelectionFilter(), jsonEventData);
         if (selectionResult.isMatch()) {
-            var filteredResponse = jsonEventData;
             try {
-                filteredResponse = applyJsonPathResponseFilter(trigger.getResponseFilter(),trigger.getResponseFilterMode() ,filteredResponse);
+                var jsonPathFilteredResponse = applyJsonPathResponseFilter(trigger.getResponseFilter(),trigger.getResponseFilterMode() ,jsonEventData);
+                return new ImmutablePair<>(selectionResult, jsonPathFilteredResponse);
             } catch (JsonPathException ex) {
                 log.warn("Could not apply jsonpath response-filter. Falling back to jsonpointer filter...", ex);
-                filteredResponse = applyResponseFilter(trigger.getResponseFilter(),trigger.getResponseFilterMode() ,jsonEventData);
+                var jsonPointerFilteredResponse = applyResponseFilter(trigger.getResponseFilter(),trigger.getResponseFilterMode() ,jsonEventData);
+                return new ImmutablePair<>(selectionResult, jsonPointerFilteredResponse);
             } catch (Exception ex) {
                 log.warn("Unexpected error file applying jsonpath response-filter", ex);
             }
-
-            return new ImmutablePair<>(selectionResult, filteredResponse);
         }
 
         return new ImmutablePair<>(selectionResult, null);
