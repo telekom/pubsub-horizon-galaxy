@@ -33,7 +33,7 @@ public class GalaxyConfig {
 
     private boolean featureJsonPathFilteringEnabled;
 
-    @Value("#{'${feature-json-path-filtering-event-types}'.split(',')}")
+    @Value("#{'${galaxy.feature-jsonpath-filtering-event-types:}'.split(',')}")
     private List<String> featureJsonPathFilteringEventTypes;
 
 }
