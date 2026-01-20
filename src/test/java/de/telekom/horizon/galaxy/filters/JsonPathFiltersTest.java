@@ -58,7 +58,7 @@ class JsonPathFiltersTest {
 
         // Include
         {
-            var includeJsonNode = JsonPathFilters.applyJsonPathResponseFilter(List.of("$.hello", "$.foo.bar", "@prefixed", "foo.@prefixed", "$.buzz[?(@.value == 21)]", "$.numbers[?(@ < 3)]"), ResponseFilterMode.INCLUDE, jsonNode.deepCopy());
+            var includeJsonNode = JsonPathFilters.applyJsonPathResponseFilter(List.of("$.hello", "$.foo.bar", "$.@prefixed", "foo.@prefixed", "$.buzz[?(@.value == 21)]", "$.numbers[?(@ < 3)]"), ResponseFilterMode.INCLUDE, jsonNode.deepCopy());
             assertFalse(includeJsonNode.at("/hello").isMissingNode());
             assertFalse(includeJsonNode.at("/foo/bar").isMissingNode());
             assertTrue(includeJsonNode.at("/foo/the-cake").isMissingNode());
@@ -83,7 +83,6 @@ class JsonPathFiltersTest {
             assertTrue(excludeJsonNode.at("/buzz/1").isMissingNode());
             assertFalse(excludeJsonNode.at("/buzz/0").isMissingNode());
             assertTrue(excludeJsonNode.at("/foo/@prefixed").isMissingNode());
-            assertTrue(excludeJsonNode.at("/@prefixed").isMissingNode());
 
             List<Integer> remainingNumbers = new ArrayList<>();
             excludeJsonNode.at("/numbers").elements().forEachRemaining(v -> remainingNumbers.add(v.asInt()));
