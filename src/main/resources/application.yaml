@@ -54,7 +54,7 @@ galaxy:
   subscription-max-threadpool-size: ${GALAXY_SUBSCRIPTION_MAX_THREADPOOL_SIZE:20}
   default-environment: ${GALAXY_DEFAULT_ENVIRONMENT:default}
   feature-json-path-filtering-enabled: ${GALAXY_FEATURE_JSONPATH_FILTERING_ENABLED:false}
-  feature-json-path-filtering-event-types: ${GALAXY_FEATURE_JSONPATH_FILTERING_EVENT_TYPES}
+  feature-json-path-filtering-event-types: ${GALAXY_FEATURE_JSONPATH_FILTERING_EVENT_TYPES:""}
 management:
   metrics:
     distribution:
