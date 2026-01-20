@@ -292,20 +292,6 @@ public class JsonPathJacksonJsonProvider extends AbstractJsonProvider {
         throw new JsonPathException("Cannot convert " + (o != null ? o.getClass().getName() : "null") + " to ArrayNode");
     }
 
-    @SuppressWarnings("unchecked")
-    private List<Object> toList(Object o) {
-        if (o instanceof List) {
-            return (List<Object>) o;
-        } else if (o instanceof ArrayNode) {
-            List<Object> list = new ArrayList<>();
-            for (JsonNode node : (ArrayNode) o) {
-                list.add(node);
-            }
-            return list;
-        }
-        throw new JsonPathException("Cannot convert " + (o != null ? o.getClass().getName() : "null") + " to List");
-    }
-
     private ObjectNode toJsonObject(Object o) {
         return (ObjectNode) o;
     }
