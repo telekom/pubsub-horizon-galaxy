@@ -52,6 +52,7 @@ dependencies {
     //3rd party
     annotationProcessor "org.projectlombok:lombok"
     implementation 'com.fasterxml.jackson.core:jackson-databind'
+    implementation "com.jayway.jsonpath:json-path:${jsonPathVersion}"
     compileOnly "org.projectlombok:lombok"
     testCompileOnly "org.projectlombok:lombok"
 

@@ -23,10 +23,11 @@ import de.telekom.eni.pandora.horizon.model.tracing.Constants;
 import de.telekom.eni.pandora.horizon.tracing.HorizonTracer;
 import de.telekom.horizon.galaxy.cache.PayloadSizeHistogramCache;
 import de.telekom.horizon.galaxy.cache.SubscriberCache;
+import de.telekom.horizon.galaxy.config.GalaxyConfig;
 import de.telekom.horizon.galaxy.model.EvaluationResultStatus;
 import de.telekom.horizon.galaxy.model.PublishedMessageTaskResult;
-import de.telekom.horizon.galaxy.utils.FilterEventMessageWrapper;
-import de.telekom.horizon.galaxy.utils.Filters;
+import de.telekom.horizon.galaxy.filters.FilterEventMessageWrapper;
+import de.telekom.horizon.galaxy.filters.Filters;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.jetbrains.annotations.NotNull;
@@ -62,6 +63,7 @@ public class PublishedMessageTask implements Callable<PublishedMessageTaskResult
     private PublishedEventMessage publishedEventMessage;
     private final PayloadSizeHistogramCache incomingPayloadSizeCache;
     private final PayloadSizeHistogramCache outgoingPayloadSizeHistogramCache;
+    private final GalaxyConfig galaxyConfig;
 
     private final ThreadPoolTaskExecutor taskExecutor;
 
@@ -76,6 +78,7 @@ public class PublishedMessageTask implements Callable<PublishedMessageTaskResult
         this.incomingPayloadSizeCache = factory.getIncomingPayloadSizeCache();
         this.outgoingPayloadSizeHistogramCache = factory.getOutgoingPayloadSizeHistogramCache();
         this.objectMapper = factory.getObjectMapper();
+        this.galaxyConfig = factory.getGalaxyConfig();
 
         taskExecutor = initThreadPoolTaskExecutor(factory);
     }
@@ -123,7 +126,7 @@ public class PublishedMessageTask implements Callable<PublishedMessageTaskResult
 
             //Apply response- and selection-filter
             log.info("Applying filters.");
-            Map<String, FilterEventMessageWrapper> filteredEventMessagesPerRecipient = getFilteredEventMessagesPerRecipient(recipients);
+            Map<String, FilterEventMessageWrapper> filteredEventMessagesPerRecipient = getFilteredEventMessagesPerRecipient(recipients, galaxyConfig);
 
             //Create subscriptionEventMessages for all recipients
             Map<String, SubscriptionEventMessage> subscriptionEventMessagesMap;
@@ -373,7 +376,7 @@ public class PublishedMessageTask implements Callable<PublishedMessageTaskResult
      * @see FilterEventMessageWrapper
      */
     @NotNull
-    private Map<String, FilterEventMessageWrapper> getFilteredEventMessagesPerRecipient(List<SubscriptionResource> recipients) {
+    private Map<String, FilterEventMessageWrapper> getFilteredEventMessagesPerRecipient(List<SubscriptionResource> recipients, GalaxyConfig galaxyConfig) {
         var filterSpan = tracer.startScopedDebugSpan("apply filters");
         Map<String, FilterEventMessageWrapper> filteredEventMessagesPerRecipient = new HashMap<>();
         try {
@@ -387,7 +390,7 @@ public class PublishedMessageTask implements Callable<PublishedMessageTaskResult
                 jsonEventDataOrNull = parseEventData(eventData);
             }
 
-            filteredEventMessagesPerRecipient = Filters.filterDataForRecipients(recipients, jsonEventDataOrNull);
+            filteredEventMessagesPerRecipient = Filters.filterDataForRecipients(recipients, jsonEventDataOrNull, galaxyConfig);
         } finally {
             filterSpan.finish();
         }

@@ -2,14 +2,16 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-package de.telekom.horizon.galaxy.utils;
+package de.telekom.horizon.galaxy.filters;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.jayway.jsonpath.JsonPathException;
 import de.telekom.eni.pandora.horizon.kubernetes.resource.Subscription;
 import de.telekom.eni.pandora.horizon.kubernetes.resource.SubscriptionResource;
 import de.telekom.eni.pandora.horizon.kubernetes.resource.SubscriptionTrigger;
+import de.telekom.horizon.galaxy.config.GalaxyConfig;
 import de.telekom.jsonfilter.operator.EvaluationResult;
 import de.telekom.jsonfilter.operator.Operator;
 import de.telekom.jsonfilter.operator.comparison.ComparisonOperator;
@@ -20,6 +22,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.tuple.ImmutablePair;
 
 import java.util.*;
+
+import static de.telekom.horizon.galaxy.filters.JsonPathFilters.applyJsonPathResponseFilter;
 
 /**
  * Utility class responsible for filtering data for recipients based on
@@ -41,12 +45,12 @@ public class Filters {
      * @param jsonEventDataOrNull  incoming data in optional JsonNode format.
      * @return map of subscriptionIds mapped to filtered event data for each subscription.
      */
-    public static Map<String, FilterEventMessageWrapper> filterDataForRecipients(List<SubscriptionResource> recipients, JsonNode jsonEventDataOrNull) {
+    public static Map<String, FilterEventMessageWrapper> filterDataForRecipients(List<SubscriptionResource> recipients, JsonNode jsonEventDataOrNull, GalaxyConfig galaxyConfig) {
         Map<String, FilterEventMessageWrapper> filteredEventWrapperPerSubscriptionId = new HashMap<>();
 
         recipients.forEach(recipient -> {
             var subscription = recipient.getSpec().getSubscription();
-            filteredEventWrapperPerSubscriptionId.put(subscription.getSubscriptionId(), getFilteredEventDataForSubscription(subscription, jsonEventDataOrNull));
+            filteredEventWrapperPerSubscriptionId.put(subscription.getSubscriptionId(), getFilteredEventDataForSubscription(subscription, jsonEventDataOrNull, galaxyConfig));
         });
 
         return filteredEventWrapperPerSubscriptionId;
@@ -59,7 +63,7 @@ public class Filters {
      * @param jsonEventDataOrNull  incoming data in optional JsonNode format.
      * @return filtered event data for the specific subscription.
      */
-    private static FilterEventMessageWrapper getFilteredEventDataForSubscription(Subscription subscription, JsonNode jsonEventDataOrNull) {
+    private static FilterEventMessageWrapper getFilteredEventDataForSubscription(Subscription subscription, JsonNode jsonEventDataOrNull, GalaxyConfig galaxyConfig) {
         log.info("Filtering event data for subscription: {}", subscription.getSubscriptionId());
 
         //Check if any filter is present
@@ -74,15 +78,18 @@ public class Filters {
             return FilterEventMessageWrapper.withPayloadInvalidError();
         }
 
+        var applyJsonPathFilter = galaxyConfig.isFeatureJsonPathFilteringEnabled() &&
+                                  galaxyConfig.getFeatureJsonPathFilteringEventTypes().contains(subscription.getType());
+
         //Check if the scope filter matches
-        var scopedFilterResult = applyFilter(subscription.getPublisherTrigger(), jsonEventDataOrNull);
+        var scopedFilterResult = applyFilter(subscription.getPublisherTrigger(), jsonEventDataOrNull, applyJsonPathFilter);
         if (!scopedFilterResult.getLeft().isMatch()) {
             log.info("Scope filter did not match for subscription: {}", subscription.getSubscriptionId());
             return FilterEventMessageWrapper.withScopeError(scopedFilterResult.getLeft());
         }
 
         //Check if the consumer filter matches
-        var consumerFilterResult = applyFilter(subscription.getTrigger(), scopedFilterResult.getRight());
+        var consumerFilterResult = applyFilter(subscription.getTrigger(), scopedFilterResult.getRight(), applyJsonPathFilter);
         if (!consumerFilterResult.getLeft().isMatch()) {
             log.info("Consumer filter did not match for subscription: {}", subscription.getSubscriptionId());
             return FilterEventMessageWrapper.withConsumerError(consumerFilterResult.getLeft());
@@ -111,7 +118,7 @@ public class Filters {
      * @param jsonEventData  incoming data in JsonNode format.
      * @return pair of evaluation result of the filter application and the resulting filtered JsonNode.
      */
-    private static ImmutablePair<EvaluationResult, JsonNode> applyFilter(SubscriptionTrigger trigger, JsonNode jsonEventData) {
+    private static ImmutablePair<EvaluationResult, JsonNode> applyFilter(SubscriptionTrigger trigger, JsonNode jsonEventData, boolean jsonPathFiltering) {
         if (trigger == null) {
             log.debug("Trigger for subscription is null, returning:\n {}", EvaluationResult.empty());
             return new ImmutablePair<>(EvaluationResult.empty(), jsonEventData);
@@ -119,7 +126,20 @@ public class Filters {
 
         var selectionResult = applySelectionFilter(trigger.getSelectionFilter(), trigger.getAdvancedSelectionFilter(), jsonEventData);
         if (selectionResult.isMatch()) {
-            return new ImmutablePair<>(selectionResult, applyResponseFilter(trigger.getResponseFilter(),trigger.getResponseFilterMode() ,jsonEventData));
+           if (jsonPathFiltering) {
+               try {
+                   var jsonPathFilteredResponse = applyJsonPathResponseFilter(trigger.getResponseFilter(),trigger.getResponseFilterMode() ,jsonEventData);
+                   return new ImmutablePair<>(selectionResult, jsonPathFilteredResponse);
+               } catch (JsonPathException ex) {
+                   log.warn("Could not apply jsonpath response-filter. Falling back to jsonpointer filter...", ex);
+                   var jsonPointerFilteredResponse = applyResponseFilter(trigger.getResponseFilter(),trigger.getResponseFilterMode() ,jsonEventData);
+                   return new ImmutablePair<>(selectionResult, jsonPointerFilteredResponse);
+               } catch (Exception ex) {
+                   log.warn("Unexpected error file applying jsonpath response-filter", ex);
+               }
+           } else {
+               return new ImmutablePair<>(selectionResult, applyResponseFilter(trigger.getResponseFilter(),trigger.getResponseFilterMode() ,jsonEventData));
+           }
         }
 
         return new ImmutablePair<>(selectionResult, null);
