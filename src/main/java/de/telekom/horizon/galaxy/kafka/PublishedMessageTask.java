@@ -32,14 +32,10 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.jetbrains.annotations.NotNull;
 import org.slf4j.MDC;
-import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 
 import java.util.*;
 import java.util.concurrent.Callable;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ThreadPoolExecutor;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.Pattern;
 
 import static de.telekom.eni.pandora.horizon.metrics.HorizonMetricsConstants.METRIC_MULTIPLEXED_EVENTS;
@@ -65,8 +61,6 @@ public class PublishedMessageTask implements Callable<PublishedMessageTaskResult
     private final PayloadSizeHistogramCache outgoingPayloadSizeHistogramCache;
     private final GalaxyConfig galaxyConfig;
 
-    private final ThreadPoolTaskExecutor taskExecutor;
-
     public PublishedMessageTask(ConsumerRecord<String, String> consumerRecord, PublishedMessageTaskFactory factory) {
         this.consumerRecord = consumerRecord;
 
@@ -79,20 +73,6 @@ public class PublishedMessageTask implements Callable<PublishedMessageTaskResult
         this.outgoingPayloadSizeHistogramCache = factory.getOutgoingPayloadSizeHistogramCache();
         this.objectMapper = factory.getObjectMapper();
         this.galaxyConfig = factory.getGalaxyConfig();
-
-        taskExecutor = initThreadPoolTaskExecutor(factory);
-    }
-
-    @NotNull
-    private ThreadPoolTaskExecutor initThreadPoolTaskExecutor(PublishedMessageTaskFactory factory) {
-        final ThreadPoolTaskExecutor threadPoolTaskExecutor = new ThreadPoolTaskExecutor();
-        threadPoolTaskExecutor.setThreadGroupName("multiplex");
-        threadPoolTaskExecutor.setThreadNamePrefix("multiplex");
-        threadPoolTaskExecutor.setCorePoolSize(factory.getGalaxyConfig().getSubscriptionCoreThreadPoolSize());
-        threadPoolTaskExecutor.setMaxPoolSize(factory.getGalaxyConfig().getSubscriptionMaxThreadPoolSize());
-        threadPoolTaskExecutor.setRejectedExecutionHandler(new ThreadPoolExecutor.CallerRunsPolicy());
-        threadPoolTaskExecutor.afterPropertiesSet();
-        return threadPoolTaskExecutor;
     }
 
     @Override
@@ -140,60 +120,38 @@ public class PublishedMessageTask implements Callable<PublishedMessageTaskResult
             }
 
             //Send to Kafka
-            List<CompletableFuture<?>> futureList = sendMessagesToKafkaAsync(subscriptionEventMessagesMap, filteredEventMessagesPerRecipient);
-            AtomicBoolean isSuccessful = waitForAllMessagesToBeSent(futureList);
-
-            return new PublishedMessageTaskResult(isSuccessful.get());
+            var isSuccessful = sendMessagesToKafka(subscriptionEventMessagesMap, filteredEventMessagesPerRecipient);
+            return new PublishedMessageTaskResult(isSuccessful);
         } finally {
-            shutdownTaskExecutorAndFinishSpan(span);
+            finishSpan(span);
         }
     }
 
     /**
-     * Waits for all messages to be sent asynchronously and returns whether the operation was successful.
-     *
-     * @param futureList The list of CompletableFuture instances representing messages being sent.
-     * @return An {@link AtomicBoolean} indicating whether all messages were sent successfully.
-     */
-    @NotNull
-    private static AtomicBoolean waitForAllMessagesToBeSent(List<CompletableFuture<?>> futureList) {
-        AtomicBoolean isSuccessful = new AtomicBoolean(true);
-        CompletableFuture
-                .allOf(futureList.toArray(new CompletableFuture[0]))
-                .exceptionally(exception -> {
-                    isSuccessful.set(false);
-                    return null;
-                })
-                .join();
-        return isSuccessful;
-    }
-
-    /**
-     * Sends messages to Kafka for each {@link SubscriptionEventMessage} asynchronously (each message in one Task).
+     * Sends messages to Kafka for each {@link SubscriptionEventMessage}.
      *
      * @param subscriptionEventMessagesMap       A map of SubscriptionId to {@link SubscriptionEventMessage}.
      * @param filteredEventMessagesPerRecipient  A map of SubscriptionId to {@link FilterEventMessageWrapper}.
      * @return A list of CompletableFutures representing the asynchronous sending of messages to kafka.
      */
-    @NotNull
-    private List<CompletableFuture<?>> sendMessagesToKafkaAsync(Map<String, SubscriptionEventMessage> subscriptionEventMessagesMap, Map<String, FilterEventMessageWrapper> filteredEventMessagesPerRecipient) {
-        List<CompletableFuture<?>> futureList = new ArrayList<>();
-
+    private boolean sendMessagesToKafka(Map<String, SubscriptionEventMessage> subscriptionEventMessagesMap, Map<String, FilterEventMessageWrapper> filteredEventMessagesPerRecipient) {
         for (var entry : subscriptionEventMessagesMap.entrySet()) {
             log.info("Sending SubscriptionEventMessage for subscription {}.", entry.getKey());
-            var taskFuture = sendMessageToKafkaAsync(entry.getValue(), filteredEventMessagesPerRecipient);
-            futureList.add(taskFuture);
+            try {
+                sendMessageToKafka(entry.getValue(), filteredEventMessagesPerRecipient);
+            } catch (Exception e) {
+                return false;
+            }
         }
-        return futureList;
+        return true;
     }
 
     /**
-     * Shuts down the task executor and finishes the given span.
+     * Finishes the given span.
      *
      * @param span The span to finish.
      */
-    private void shutdownTaskExecutorAndFinishSpan(Span span) {
-        taskExecutor.shutdown();
+    private void finishSpan(Span span) {
         MDC.clear();
         span.finish();
     }
@@ -203,13 +161,10 @@ public class PublishedMessageTask implements Callable<PublishedMessageTaskResult
      *
      * @param subscriptionEventMessage             The SubscriptionEventMessage to send.
      * @param filteredEventMessagesPerRecipient    A map of SubscriptionId to {@link FilterEventMessageWrapper}.
-     * @return A CompletableFuture representing the asynchronous sending of the message.
      */
-    @NotNull
-    private CompletableFuture<Void> sendMessageToKafkaAsync(SubscriptionEventMessage subscriptionEventMessage, Map<String, FilterEventMessageWrapper> filteredEventMessagesPerRecipient) {
-        var mdcMap = MDC.getCopyOfContextMap();
-        return CompletableFuture.runAsync(tracer.withCurrentTraceContext(() -> {
-            MDC.setContextMap(mdcMap);
+    private void sendMessageToKafka(SubscriptionEventMessage subscriptionEventMessage, Map<String, FilterEventMessageWrapper> filteredEventMessagesPerRecipient) {
+        final Runnable sendMessage = () -> {
+            MDC.setContextMap(MDC.getCopyOfContextMap());
             var multiplexSpan = tracer.startScopedSpan("multiplex message");
 
             var subscriptionId = subscriptionEventMessage.getSubscriptionId();
@@ -233,7 +188,9 @@ public class PublishedMessageTask implements Callable<PublishedMessageTaskResult
 
                 MDC.clear();
             }
-        }), taskExecutor);
+        };
+
+        tracer.withCurrentTraceContext(sendMessage).run();
     }
 
     /**
