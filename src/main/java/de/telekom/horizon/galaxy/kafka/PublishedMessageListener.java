@@ -57,6 +57,7 @@ public class PublishedMessageListener extends AbstractConsumerSeekAware implemen
                 var result = task.call();
                 if (!result.isSuccessful()) {
                     acknowledgment.nack(i, kafkaNackSleep);
+                    return;
                 }
             } catch (Exception e) {
                 log.error("Unexpected error processing event task", e);
