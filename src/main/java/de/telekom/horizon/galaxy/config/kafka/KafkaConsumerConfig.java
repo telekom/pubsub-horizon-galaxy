@@ -37,7 +37,7 @@ public class KafkaConsumerConfig {
                                                                                                  HorizonTracer horizonTracer) {
         var containerProperties = new ContainerProperties(galaxyConfig.getConsumingTopic());
         containerProperties.setAckMode(ContainerProperties.AckMode.MANUAL);
-        containerProperties.setMessageListener(new PublishedMessageListener(publishedMessageTaskFactory, horizonTracer, galaxyConfig));
+        containerProperties.setMessageListener(new PublishedMessageListener(publishedMessageTaskFactory, horizonTracer));
         ConcurrentMessageListenerContainer<String, String> listenerContainer = new ConcurrentMessageListenerContainer<>(consumerFactory, containerProperties);
         listenerContainer.setAutoStartup(false);
         listenerContainer.setConcurrency(props.getPartitionCount());

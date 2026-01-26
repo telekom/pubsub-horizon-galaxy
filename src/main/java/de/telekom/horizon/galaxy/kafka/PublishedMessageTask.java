@@ -5,7 +5,6 @@
 package de.telekom.horizon.galaxy.kafka;
 
 import brave.ScopedSpan;
-import brave.Span;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -32,14 +31,10 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.jetbrains.annotations.NotNull;
 import org.slf4j.MDC;
-import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 
 import java.util.*;
 import java.util.concurrent.Callable;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ThreadPoolExecutor;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.Pattern;
 
 import static de.telekom.eni.pandora.horizon.metrics.HorizonMetricsConstants.METRIC_MULTIPLEXED_EVENTS;
@@ -65,8 +60,6 @@ public class PublishedMessageTask implements Callable<PublishedMessageTaskResult
     private final PayloadSizeHistogramCache outgoingPayloadSizeHistogramCache;
     private final GalaxyConfig galaxyConfig;
 
-    private final ThreadPoolTaskExecutor taskExecutor;
-
     public PublishedMessageTask(ConsumerRecord<String, String> consumerRecord, PublishedMessageTaskFactory factory) {
         this.consumerRecord = consumerRecord;
 
@@ -79,20 +72,6 @@ public class PublishedMessageTask implements Callable<PublishedMessageTaskResult
         this.outgoingPayloadSizeHistogramCache = factory.getOutgoingPayloadSizeHistogramCache();
         this.objectMapper = factory.getObjectMapper();
         this.galaxyConfig = factory.getGalaxyConfig();
-
-        taskExecutor = initThreadPoolTaskExecutor(factory);
-    }
-
-    @NotNull
-    private ThreadPoolTaskExecutor initThreadPoolTaskExecutor(PublishedMessageTaskFactory factory) {
-        final ThreadPoolTaskExecutor threadPoolTaskExecutor = new ThreadPoolTaskExecutor();
-        threadPoolTaskExecutor.setThreadGroupName("multiplex");
-        threadPoolTaskExecutor.setThreadNamePrefix("multiplex");
-        threadPoolTaskExecutor.setCorePoolSize(factory.getGalaxyConfig().getSubscriptionCoreThreadPoolSize());
-        threadPoolTaskExecutor.setMaxPoolSize(factory.getGalaxyConfig().getSubscriptionMaxThreadPoolSize());
-        threadPoolTaskExecutor.setRejectedExecutionHandler(new ThreadPoolExecutor.CallerRunsPolicy());
-        threadPoolTaskExecutor.afterPropertiesSet();
-        return threadPoolTaskExecutor;
     }
 
     @Override
@@ -105,97 +84,68 @@ public class PublishedMessageTask implements Callable<PublishedMessageTaskResult
                 publishedEventMessage = objectMapper.readValue(consumerRecord.value(), PublishedEventMessage.class);
             } catch (JsonProcessingException e) {
                 log.error("JsonProcessingException occurred while parsing published event message with key {}!", consumerRecord.key(), e);
-
                 return new PublishedMessageTaskResult(true);
             }
 
-            setLoggingContext();
-            recordIncomingPayloadSize();
+            try(
+                    var ignored1 = MDC.putCloseable("UUID", publishedEventMessage.getUuid());
+                    var ignored2 = MDC.putCloseable("EventId", publishedEventMessage.getEvent().getId())
+            ) {
+                recordIncomingPayloadSize();
 
-            log.info("Created Task from ConsumerRecord.");
+                log.info("Created Task from ConsumerRecord.");
 
-            //Retrieve recipients for event and remove duplicates
-            var recipients = getRecipientsForPublishedEventMessage(publishedEventMessage);
+                //Retrieve recipients for event and remove duplicates
+                var recipients = getRecipientsForPublishedEventMessage(publishedEventMessage);
 
-            if (recipients.isEmpty()) {
-                log.info("No recipients found for event. Skipping multiplexing.");
-                return new PublishedMessageTaskResult(true);
+                if (recipients.isEmpty()) {
+                    log.info("No recipients found for event. Skipping multiplexing.");
+                    return new PublishedMessageTaskResult(true);
+                }
+
+                log.info("Found {} recipients for event.", recipients.size());
+
+                //Apply response- and selection-filter
+                log.info("Applying filters.");
+                Map<String, FilterEventMessageWrapper> filteredEventMessagesPerRecipient = getFilteredEventMessagesPerRecipient(recipients, galaxyConfig);
+
+                //Create subscriptionEventMessages for all recipients
+                Map<String, SubscriptionEventMessage> subscriptionEventMessagesMap;
+                try {
+                    subscriptionEventMessagesMap = createSubscriptionEventMessages(recipients, filteredEventMessagesPerRecipient, publishedEventMessage);
+                } catch (Exception e) {
+                    log.error("An unknown error occurred while handling event.", e);
+
+                    //We should send these events to a dead-letter-topic in future
+                    return new PublishedMessageTaskResult(true);
+                }
+
+                //Send to Kafka
+                var isSuccessful = sendMessagesToKafka(subscriptionEventMessagesMap, filteredEventMessagesPerRecipient);
+                return new PublishedMessageTaskResult(isSuccessful);
             }
-
-            log.info("Found {} recipients for event.", recipients.size());
-
-            //Apply response- and selection-filter
-            log.info("Applying filters.");
-            Map<String, FilterEventMessageWrapper> filteredEventMessagesPerRecipient = getFilteredEventMessagesPerRecipient(recipients, galaxyConfig);
-
-            //Create subscriptionEventMessages for all recipients
-            Map<String, SubscriptionEventMessage> subscriptionEventMessagesMap;
-            try {
-                subscriptionEventMessagesMap = createSubscriptionEventMessages(recipients, filteredEventMessagesPerRecipient, publishedEventMessage);
-            } catch (Exception e) {
-                log.error("An unknown error occurred while handling event.", e);
-
-                //We should send these events to a dead-letter-topic in future
-                return new PublishedMessageTaskResult(true);
-            }
-
-            //Send to Kafka
-            List<CompletableFuture<?>> futureList = sendMessagesToKafkaAsync(subscriptionEventMessagesMap, filteredEventMessagesPerRecipient);
-            AtomicBoolean isSuccessful = waitForAllMessagesToBeSent(futureList);
-
-            return new PublishedMessageTaskResult(isSuccessful.get());
         } finally {
-            shutdownTaskExecutorAndFinishSpan(span);
+            span.finish();
         }
     }
 
     /**
-     * Waits for all messages to be sent asynchronously and returns whether the operation was successful.
-     *
-     * @param futureList The list of CompletableFuture instances representing messages being sent.
-     * @return An {@link AtomicBoolean} indicating whether all messages were sent successfully.
-     */
-    @NotNull
-    private static AtomicBoolean waitForAllMessagesToBeSent(List<CompletableFuture<?>> futureList) {
-        AtomicBoolean isSuccessful = new AtomicBoolean(true);
-        CompletableFuture
-                .allOf(futureList.toArray(new CompletableFuture[0]))
-                .exceptionally(exception -> {
-                    isSuccessful.set(false);
-                    return null;
-                })
-                .join();
-        return isSuccessful;
-    }
-
-    /**
-     * Sends messages to Kafka for each {@link SubscriptionEventMessage} asynchronously (each message in one Task).
+     * Sends messages to Kafka for each {@link SubscriptionEventMessage}.
      *
      * @param subscriptionEventMessagesMap       A map of SubscriptionId to {@link SubscriptionEventMessage}.
      * @param filteredEventMessagesPerRecipient  A map of SubscriptionId to {@link FilterEventMessageWrapper}.
      * @return A list of CompletableFutures representing the asynchronous sending of messages to kafka.
      */
-    @NotNull
-    private List<CompletableFuture<?>> sendMessagesToKafkaAsync(Map<String, SubscriptionEventMessage> subscriptionEventMessagesMap, Map<String, FilterEventMessageWrapper> filteredEventMessagesPerRecipient) {
-        List<CompletableFuture<?>> futureList = new ArrayList<>();
-
+    private boolean sendMessagesToKafka(Map<String, SubscriptionEventMessage> subscriptionEventMessagesMap, Map<String, FilterEventMessageWrapper> filteredEventMessagesPerRecipient) {
         for (var entry : subscriptionEventMessagesMap.entrySet()) {
             log.info("Sending SubscriptionEventMessage for subscription {}.", entry.getKey());
-            var taskFuture = sendMessageToKafkaAsync(entry.getValue(), filteredEventMessagesPerRecipient);
-            futureList.add(taskFuture);
+            try {
+                sendMessageToKafka(entry.getValue(), filteredEventMessagesPerRecipient);
+            } catch (Exception e) {
+                return false;
+            }
         }
-        return futureList;
-    }
-
-    /**
-     * Shuts down the task executor and finishes the given span.
-     *
-     * @param span The span to finish.
-     */
-    private void shutdownTaskExecutorAndFinishSpan(Span span) {
-        taskExecutor.shutdown();
-        MDC.clear();
-        span.finish();
+        return true;
     }
 
     /**
@@ -203,13 +153,9 @@ public class PublishedMessageTask implements Callable<PublishedMessageTaskResult
      *
      * @param subscriptionEventMessage             The SubscriptionEventMessage to send.
      * @param filteredEventMessagesPerRecipient    A map of SubscriptionId to {@link FilterEventMessageWrapper}.
-     * @return A CompletableFuture representing the asynchronous sending of the message.
      */
-    @NotNull
-    private CompletableFuture<Void> sendMessageToKafkaAsync(SubscriptionEventMessage subscriptionEventMessage, Map<String, FilterEventMessageWrapper> filteredEventMessagesPerRecipient) {
-        var mdcMap = MDC.getCopyOfContextMap();
-        return CompletableFuture.runAsync(tracer.withCurrentTraceContext(() -> {
-            MDC.setContextMap(mdcMap);
+    private void sendMessageToKafka(SubscriptionEventMessage subscriptionEventMessage, Map<String, FilterEventMessageWrapper> filteredEventMessagesPerRecipient) {
+        final Runnable sendMessage = () -> {
             var multiplexSpan = tracer.startScopedSpan("multiplex message");
 
             var subscriptionId = subscriptionEventMessage.getSubscriptionId();
@@ -230,10 +176,10 @@ public class PublishedMessageTask implements Callable<PublishedMessageTaskResult
                 var tags = metricsHelper.buildTagsFromSubscriptionEventMessage(subscriptionEventMessage);
                 metricsHelper.getRegistry().counter(METRIC_MULTIPLEXED_EVENTS, tags).increment();
                 multiplexSpan.finish();
-
-                MDC.clear();
             }
-        }), taskExecutor);
+        };
+
+        tracer.withCurrentTraceContext(sendMessage).run();
     }
 
     /**
@@ -256,14 +202,6 @@ public class PublishedMessageTask implements Callable<PublishedMessageTaskResult
      */
     private void recordOutgoingPayloadSize(SubscriptionEventMessage subscriptionEventMessage) {
         outgoingPayloadSizeHistogramCache.recordMessage(subscriptionEventMessage);
-    }
-
-    /**
-     * Sets the logging context for MDC with UUID and EventId from the {@link PublishedEventMessage}.
-     */
-    private void setLoggingContext() {
-        MDC.put("UUID", publishedEventMessage.getUuid());
-        MDC.put("EventId", publishedEventMessage.getEvent().getId());
     }
 
     /**

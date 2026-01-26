@@ -17,15 +17,6 @@ import java.util.List;
 @Getter
 @Setter
 public class GalaxyConfig {
-
-    private int batchCoreThreadPoolSize;
-
-    private int batchMaxThreadPoolSize;
-
-    private int subscriptionCoreThreadPoolSize;
-
-    private int subscriptionMaxThreadPoolSize;
-
     private String defaultEnvironment;
 
     @Value("${horizon.kafka.consumingTopic}")
@@ -35,5 +26,4 @@ public class GalaxyConfig {
 
     @Value("#{'${galaxy.feature-jsonpath-filtering-event-types:}'.split(',')}")
     private List<String> featureJsonPathFilteringEventTypes;
-
 }
