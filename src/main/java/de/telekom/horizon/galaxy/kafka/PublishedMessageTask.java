@@ -5,7 +5,6 @@
 package de.telekom.horizon.galaxy.kafka;
 
 import brave.ScopedSpan;
-import brave.Span;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -85,45 +84,48 @@ public class PublishedMessageTask implements Callable<PublishedMessageTaskResult
                 publishedEventMessage = objectMapper.readValue(consumerRecord.value(), PublishedEventMessage.class);
             } catch (JsonProcessingException e) {
                 log.error("JsonProcessingException occurred while parsing published event message with key {}!", consumerRecord.key(), e);
-
                 return new PublishedMessageTaskResult(true);
             }
 
-            setLoggingContext();
-            recordIncomingPayloadSize();
+            try(
+                    var ignored1 = MDC.putCloseable("UUID", publishedEventMessage.getUuid());
+                    var ignored2 = MDC.putCloseable("EventId", publishedEventMessage.getEvent().getId())
+            ) {
+                recordIncomingPayloadSize();
 
-            log.info("Created Task from ConsumerRecord.");
+                log.info("Created Task from ConsumerRecord.");
 
-            //Retrieve recipients for event and remove duplicates
-            var recipients = getRecipientsForPublishedEventMessage(publishedEventMessage);
+                //Retrieve recipients for event and remove duplicates
+                var recipients = getRecipientsForPublishedEventMessage(publishedEventMessage);
 
-            if (recipients.isEmpty()) {
-                log.info("No recipients found for event. Skipping multiplexing.");
-                return new PublishedMessageTaskResult(true);
+                if (recipients.isEmpty()) {
+                    log.info("No recipients found for event. Skipping multiplexing.");
+                    return new PublishedMessageTaskResult(true);
+                }
+
+                log.info("Found {} recipients for event.", recipients.size());
+
+                //Apply response- and selection-filter
+                log.info("Applying filters.");
+                Map<String, FilterEventMessageWrapper> filteredEventMessagesPerRecipient = getFilteredEventMessagesPerRecipient(recipients, galaxyConfig);
+
+                //Create subscriptionEventMessages for all recipients
+                Map<String, SubscriptionEventMessage> subscriptionEventMessagesMap;
+                try {
+                    subscriptionEventMessagesMap = createSubscriptionEventMessages(recipients, filteredEventMessagesPerRecipient, publishedEventMessage);
+                } catch (Exception e) {
+                    log.error("An unknown error occurred while handling event.", e);
+
+                    //We should send these events to a dead-letter-topic in future
+                    return new PublishedMessageTaskResult(true);
+                }
+
+                //Send to Kafka
+                var isSuccessful = sendMessagesToKafka(subscriptionEventMessagesMap, filteredEventMessagesPerRecipient);
+                return new PublishedMessageTaskResult(isSuccessful);
             }
-
-            log.info("Found {} recipients for event.", recipients.size());
-
-            //Apply response- and selection-filter
-            log.info("Applying filters.");
-            Map<String, FilterEventMessageWrapper> filteredEventMessagesPerRecipient = getFilteredEventMessagesPerRecipient(recipients, galaxyConfig);
-
-            //Create subscriptionEventMessages for all recipients
-            Map<String, SubscriptionEventMessage> subscriptionEventMessagesMap;
-            try {
-                subscriptionEventMessagesMap = createSubscriptionEventMessages(recipients, filteredEventMessagesPerRecipient, publishedEventMessage);
-            } catch (Exception e) {
-                log.error("An unknown error occurred while handling event.", e);
-
-                //We should send these events to a dead-letter-topic in future
-                return new PublishedMessageTaskResult(true);
-            }
-
-            //Send to Kafka
-            var isSuccessful = sendMessagesToKafka(subscriptionEventMessagesMap, filteredEventMessagesPerRecipient);
-            return new PublishedMessageTaskResult(isSuccessful);
         } finally {
-            finishSpan(span);
+            span.finish();
         }
     }
 
@@ -147,16 +149,6 @@ public class PublishedMessageTask implements Callable<PublishedMessageTaskResult
     }
 
     /**
-     * Finishes the given span.
-     *
-     * @param span The span to finish.
-     */
-    private void finishSpan(Span span) {
-        MDC.clear();
-        span.finish();
-    }
-
-    /**
      * Sends either an {@link SubscriptionEventMessage} or an ({@link Status#FAILED}|{@link Status#DROPPED} {@link StatusMessage} in a new Task to Kafka for the given {@link SubscriptionEventMessage}.
      *
      * @param subscriptionEventMessage             The SubscriptionEventMessage to send.
@@ -164,7 +156,6 @@ public class PublishedMessageTask implements Callable<PublishedMessageTaskResult
      */
     private void sendMessageToKafka(SubscriptionEventMessage subscriptionEventMessage, Map<String, FilterEventMessageWrapper> filteredEventMessagesPerRecipient) {
         final Runnable sendMessage = () -> {
-            MDC.setContextMap(MDC.getCopyOfContextMap());
             var multiplexSpan = tracer.startScopedSpan("multiplex message");
 
             var subscriptionId = subscriptionEventMessage.getSubscriptionId();
@@ -185,8 +176,6 @@ public class PublishedMessageTask implements Callable<PublishedMessageTaskResult
                 var tags = metricsHelper.buildTagsFromSubscriptionEventMessage(subscriptionEventMessage);
                 metricsHelper.getRegistry().counter(METRIC_MULTIPLEXED_EVENTS, tags).increment();
                 multiplexSpan.finish();
-
-                MDC.clear();
             }
         };
 
@@ -213,14 +202,6 @@ public class PublishedMessageTask implements Callable<PublishedMessageTaskResult
      */
     private void recordOutgoingPayloadSize(SubscriptionEventMessage subscriptionEventMessage) {
         outgoingPayloadSizeHistogramCache.recordMessage(subscriptionEventMessage);
-    }
-
-    /**
-     * Sets the logging context for MDC with UUID and EventId from the {@link PublishedEventMessage}.
-     */
-    private void setLoggingContext() {
-        MDC.put("UUID", publishedEventMessage.getUuid());
-        MDC.put("EventId", publishedEventMessage.getEvent().getId());
     }
 
     /**
