@@ -6,7 +6,6 @@ package de.telekom.horizon.galaxy.kafka;
 
 import de.telekom.eni.pandora.horizon.model.event.PublishedEventMessage;
 import de.telekom.eni.pandora.horizon.tracing.HorizonTracer;
-import de.telekom.horizon.galaxy.config.GalaxyConfig;
 import de.telekom.horizon.galaxy.model.PublishedMessageTaskResult;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
@@ -18,7 +17,6 @@ import org.springframework.kafka.support.Acknowledgment;
 import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.Callable;
-import java.util.concurrent.Future;
 
 /**
  * The {@code PublishedMessageListener} class is responsible for processing Kafka messages in batches.
@@ -35,8 +33,7 @@ public class PublishedMessageListener extends AbstractConsumerSeekAware implemen
     private final PublishedMessageTaskFactory publishedMessageTaskFactory;
     private final HorizonTracer tracer;
 
-
-    public PublishedMessageListener(PublishedMessageTaskFactory publishedMessageTaskFactory, HorizonTracer horizonTracer, GalaxyConfig galaxyConfig) {
+    public PublishedMessageListener(PublishedMessageTaskFactory publishedMessageTaskFactory, HorizonTracer horizonTracer) {
         super();
         this.publishedMessageTaskFactory = publishedMessageTaskFactory;
         this.tracer = horizonTracer;
