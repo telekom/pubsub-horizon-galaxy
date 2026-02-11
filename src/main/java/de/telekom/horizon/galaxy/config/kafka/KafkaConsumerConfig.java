@@ -10,6 +10,9 @@ import de.telekom.horizon.galaxy.config.GalaxyConfig;
 import de.telekom.horizon.galaxy.kafka.PublishedMessageListener;
 import de.telekom.horizon.galaxy.kafka.PublishedMessageTaskFactory;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.kafka.common.errors.AuthenticationException;
+import org.apache.kafka.common.errors.AuthorizationException;
+import org.apache.kafka.common.errors.FencedInstanceIdException;
 import org.apache.kafka.common.errors.InterruptException;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.SpringApplication;
@@ -34,24 +37,36 @@ public class KafkaConsumerConfig {
         this.applicationContext = applicationContext;
     }
 
-    private boolean isInterruptException(Throwable exception) {
+    private boolean isFatalException(Throwable exception) {
         if (exception == null) {
             return false;
         }
-        if (exception instanceof InterruptedException || exception instanceof InterruptException) {
+        if (exception instanceof InterruptedException ||
+            exception instanceof InterruptException ||
+            exception instanceof AuthenticationException ||
+            exception instanceof AuthorizationException ||
+            exception instanceof FencedInstanceIdException ||
+            exception instanceof IllegalStateException) {
             return true;
         }
-        return isInterruptException(exception.getCause());
+        return isFatalException(exception.getCause());
     }
 
     /**
-     * Creates a custom error handler that shuts down the application when an InterruptedException occurs
-     * during Kafka poll(). This prevents the application from throwing an IllegalStateException when
-     * processing is interrupted outside of record processing.
+     * Creates a custom error handler that shuts down the application when a fatal exception occurs
+     * during Kafka poll(). This prevents the application from being stuck in an unhealthy state
+     * when unrecoverable errors occur outside of record processing.
+     *
+     * Fatal exceptions include:
+     * - InterruptException / InterruptedException: Thread interrupted during poll
+     * - AuthenticationException: SASL/SSL authentication failed
+     * - AuthorizationException: No permission to access topic/group
+     * - FencedInstanceIdException: Static member fenced by another instance
+     * - IllegalStateException: Consumer in invalid state
      *
      * Record-level exceptions use the default behavior (retry + log + skip).
      *
-     * @return CommonErrorHandler that handles InterruptedExceptions during poll() by stopping the application
+     * @return CommonErrorHandler that handles fatal exceptions during poll() by stopping the application
      */
     @Bean
     public CommonErrorHandler kafkaErrorHandler() {
@@ -59,8 +74,8 @@ public class KafkaConsumerConfig {
             @Override
             public void handleOtherException(Exception exception, org.apache.kafka.clients.consumer.Consumer<?, ?> consumer,
                                              MessageListenerContainer container, boolean batchListener) {
-                if (isInterruptException(exception)) {
-                    log.error("InterruptedException occurred during Kafka poll. Shutting down the application.", exception);
+                if (isFatalException(exception)) {
+                    log.error("Fatal Kafka consumer exception occurred. Shutting down the application.", exception);
                     container.stop();
                     SpringApplication.exit(applicationContext, () -> 1);
                 } else {

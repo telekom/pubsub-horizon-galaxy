@@ -5,6 +5,9 @@
 package de.telekom.horizon.galaxy.config.kafka;
 
 import org.apache.kafka.clients.consumer.Consumer;
+import org.apache.kafka.common.errors.AuthenticationException;
+import org.apache.kafka.common.errors.AuthorizationException;
+import org.apache.kafka.common.errors.FencedInstanceIdException;
 import org.apache.kafka.common.errors.InterruptException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -23,7 +26,7 @@ import static org.mockito.Mockito.*;
 
 /**
  * Unit tests for the Kafka error handler in KafkaConsumerConfig.
- * Tests the behavior when InterruptException occurs during Kafka poll().
+ * Tests the behavior when fatal exceptions occur during Kafka poll().
  */
 @ExtendWith(MockitoExtension.class)
 class KafkaConsumerConfigErrorHandlerTest {
@@ -100,15 +103,84 @@ class KafkaConsumerConfigErrorHandlerTest {
     }
 
     @Test
+    void shouldShutdownApplicationOnAuthenticationException() {
+        // Given: An AuthenticationException (SASL/SSL auth failed)
+        AuthenticationException authException = new AuthenticationException("SASL authentication failed");
+
+        try (MockedStatic<SpringApplication> springAppMock = mockStatic(SpringApplication.class)) {
+            springAppMock.when(() -> SpringApplication.exit(any(), any())).thenReturn(1);
+
+            // When: handleOtherException is called
+            errorHandler.handleOtherException(authException, consumer, container, false);
+
+            // Then: Container should be stopped and application should exit
+            verify(container).stop();
+            springAppMock.verify(() -> SpringApplication.exit(eq(applicationContext), any()));
+        }
+    }
+
+    @Test
+    void shouldShutdownApplicationOnAuthorizationException() {
+        // Given: An AuthorizationException (no ACL permissions)
+        AuthorizationException authzException = new AuthorizationException("Not authorized to access topic");
+
+        try (MockedStatic<SpringApplication> springAppMock = mockStatic(SpringApplication.class)) {
+            springAppMock.when(() -> SpringApplication.exit(any(), any())).thenReturn(1);
+
+            // When: handleOtherException is called
+            errorHandler.handleOtherException(authzException, consumer, container, false);
+
+            // Then: Container should be stopped and application should exit
+            verify(container).stop();
+            springAppMock.verify(() -> SpringApplication.exit(eq(applicationContext), any()));
+        }
+    }
+
+    @Test
+    void shouldShutdownApplicationOnFencedInstanceIdException() {
+        // Given: A FencedInstanceIdException (static member fenced)
+        FencedInstanceIdException fencedException = new FencedInstanceIdException("Instance was fenced");
+
+        try (MockedStatic<SpringApplication> springAppMock = mockStatic(SpringApplication.class)) {
+            springAppMock.when(() -> SpringApplication.exit(any(), any())).thenReturn(1);
+
+            // When: handleOtherException is called
+            errorHandler.handleOtherException(fencedException, consumer, container, false);
+
+            // Then: Container should be stopped and application should exit
+            verify(container).stop();
+            springAppMock.verify(() -> SpringApplication.exit(eq(applicationContext), any()));
+        }
+    }
+
+    @Test
+    void shouldShutdownApplicationOnIllegalStateException() {
+        // Given: An IllegalStateException (consumer in invalid state)
+        IllegalStateException illegalStateException = new IllegalStateException("Consumer is not subscribed");
+
+        try (MockedStatic<SpringApplication> springAppMock = mockStatic(SpringApplication.class)) {
+            springAppMock.when(() -> SpringApplication.exit(any(), any())).thenReturn(1);
+
+            // When: handleOtherException is called
+            errorHandler.handleOtherException(illegalStateException, consumer, container, false);
+
+            // Then: Container should be stopped and application should exit
+            verify(container).stop();
+            springAppMock.verify(() -> SpringApplication.exit(eq(applicationContext), any()));
+        }
+    }
+
+    @Test
     void shouldNotShutdownOnOtherExceptions() {
-        // Given: A non-interrupt exception
-        RuntimeException otherException = new RuntimeException("Some other error");
+        // Given: A non-fatal exception (TimeoutException is recoverable)
+        org.apache.kafka.common.errors.TimeoutException timeoutException =
+            new org.apache.kafka.common.errors.TimeoutException("Timeout during fetch");
 
         try (MockedStatic<SpringApplication> springAppMock = mockStatic(SpringApplication.class)) {
             // When: handleOtherException is called
             // Note: This will call super.handleOtherException which may throw, so we catch it
             try {
-                errorHandler.handleOtherException(otherException, consumer, container, false);
+                errorHandler.handleOtherException(timeoutException, consumer, container, false);
             } catch (Exception e) {
                 // Expected - default handler may throw for non-record exceptions
             }
