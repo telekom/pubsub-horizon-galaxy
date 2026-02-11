@@ -10,17 +10,66 @@ import de.telekom.horizon.galaxy.config.GalaxyConfig;
 import de.telekom.horizon.galaxy.kafka.PublishedMessageListener;
 import de.telekom.horizon.galaxy.kafka.PublishedMessageTaskFactory;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.kafka.common.errors.InterruptException;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.SpringApplication;
+import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.DependsOn;
 import org.springframework.kafka.core.ConsumerFactory;
+import org.springframework.kafka.listener.CommonErrorHandler;
 import org.springframework.kafka.listener.ConcurrentMessageListenerContainer;
 import org.springframework.kafka.listener.ContainerProperties;
+import org.springframework.kafka.listener.DefaultErrorHandler;
+import org.springframework.kafka.listener.MessageListenerContainer;
 
 @Configuration
 @Slf4j
 public class KafkaConsumerConfig {
+
+    private final ApplicationContext applicationContext;
+
+    public KafkaConsumerConfig(ApplicationContext applicationContext) {
+        this.applicationContext = applicationContext;
+    }
+
+    private boolean isInterruptException(Throwable exception) {
+        if (exception == null) {
+            return false;
+        }
+        if (exception instanceof InterruptedException || exception instanceof InterruptException) {
+            return true;
+        }
+        return isInterruptException(exception.getCause());
+    }
+
+    /**
+     * Creates a custom error handler that shuts down the application when an InterruptedException occurs
+     * during Kafka poll(). This prevents the application from throwing an IllegalStateException when
+     * processing is interrupted outside of record processing.
+     *
+     * Record-level exceptions use the default behavior (retry + log + skip).
+     *
+     * @return CommonErrorHandler that handles InterruptedExceptions during poll() by stopping the application
+     */
+    @Bean
+    public CommonErrorHandler kafkaErrorHandler() {
+        return new DefaultErrorHandler() {
+            @Override
+            public void handleOtherException(Exception exception, org.apache.kafka.clients.consumer.Consumer<?, ?> consumer,
+                                             MessageListenerContainer container, boolean batchListener) {
+                if (isInterruptException(exception)) {
+                    log.error("InterruptedException occurred during Kafka poll. Shutting down the application.", exception);
+                    container.stop();
+                    SpringApplication.exit(applicationContext, () -> 1);
+                } else {
+                    // Delegate to default behavior for other exceptions
+                    super.handleOtherException(exception, consumer, container, batchListener);
+                }
+            }
+        };
+    }
 
     /**
      * This class handles the configuration of the Kafka concurrent message listener container.
@@ -34,7 +83,8 @@ public class KafkaConsumerConfig {
                                                                                                  KafkaProperties props,
                                                                                                  ConsumerFactory<String, String> consumerFactory,
                                                                                                  GalaxyConfig galaxyConfig,
-                                                                                                 HorizonTracer horizonTracer) {
+                                                                                                 HorizonTracer horizonTracer,
+                                                                                                 CommonErrorHandler kafkaErrorHandler) {
         var containerProperties = new ContainerProperties(galaxyConfig.getConsumingTopic());
         containerProperties.setAckMode(ContainerProperties.AckMode.MANUAL);
         containerProperties.setMessageListener(new PublishedMessageListener(publishedMessageTaskFactory, horizonTracer, galaxyConfig));
@@ -43,6 +93,7 @@ public class KafkaConsumerConfig {
         listenerContainer.setConcurrency(props.getPartitionCount());
         // bean name is the prefix of kafka consumer thread name
         listenerContainer.setBeanName("kafka-message-listener");
+        listenerContainer.setCommonErrorHandler(kafkaErrorHandler);
         return listenerContainer;
     }
 
