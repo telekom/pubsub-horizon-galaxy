@@ -38,6 +38,7 @@ import java.util.*;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.Pattern;
@@ -64,11 +65,13 @@ public class PublishedMessageTask implements Callable<PublishedMessageTaskResult
     private final PayloadSizeHistogramCache incomingPayloadSizeCache;
     private final PayloadSizeHistogramCache outgoingPayloadSizeHistogramCache;
     private final GalaxyConfig galaxyConfig;
+    private final PublishedMessageTaskFactory factory;
 
     private final ThreadPoolTaskExecutor taskExecutor;
 
     public PublishedMessageTask(ConsumerRecord<String, String> consumerRecord, PublishedMessageTaskFactory factory) {
         this.consumerRecord = consumerRecord;
+        this.factory = factory;
 
         this.tracer = factory.getTracer();
         this.eventWriter = factory.getEventWriter();
@@ -79,20 +82,7 @@ public class PublishedMessageTask implements Callable<PublishedMessageTaskResult
         this.outgoingPayloadSizeHistogramCache = factory.getOutgoingPayloadSizeHistogramCache();
         this.objectMapper = factory.getObjectMapper();
         this.galaxyConfig = factory.getGalaxyConfig();
-
-        taskExecutor = initThreadPoolTaskExecutor(factory);
-    }
-
-    @NotNull
-    private ThreadPoolTaskExecutor initThreadPoolTaskExecutor(PublishedMessageTaskFactory factory) {
-        final ThreadPoolTaskExecutor threadPoolTaskExecutor = new ThreadPoolTaskExecutor();
-        threadPoolTaskExecutor.setThreadGroupName("multiplex");
-        threadPoolTaskExecutor.setThreadNamePrefix("multiplex");
-        threadPoolTaskExecutor.setCorePoolSize(factory.getGalaxyConfig().getSubscriptionCoreThreadPoolSize());
-        threadPoolTaskExecutor.setMaxPoolSize(factory.getGalaxyConfig().getSubscriptionMaxThreadPoolSize());
-        threadPoolTaskExecutor.setRejectedExecutionHandler(new ThreadPoolExecutor.CallerRunsPolicy());
-        threadPoolTaskExecutor.afterPropertiesSet();
-        return threadPoolTaskExecutor;
+        this.taskExecutor = factory.getSubscriptionTaskExecutor();
     }
 
     @Override
@@ -145,7 +135,8 @@ public class PublishedMessageTask implements Callable<PublishedMessageTaskResult
 
             return new PublishedMessageTaskResult(isSuccessful.get());
         } finally {
-            shutdownTaskExecutorAndFinishSpan(span);
+            MDC.clear();
+            span.finish();
         }
     }
 
@@ -188,17 +179,6 @@ public class PublishedMessageTask implements Callable<PublishedMessageTaskResult
     }
 
     /**
-     * Shuts down the task executor and finishes the given span.
-     *
-     * @param span The span to finish.
-     */
-    private void shutdownTaskExecutorAndFinishSpan(Span span) {
-        taskExecutor.shutdown();
-        MDC.clear();
-        span.finish();
-    }
-
-    /**
      * Sends either an {@link SubscriptionEventMessage} or an ({@link Status#FAILED}|{@link Status#DROPPED} {@link StatusMessage} in a new Task to Kafka for the given {@link SubscriptionEventMessage}.
      *
      * @param subscriptionEventMessage             The SubscriptionEventMessage to send.
@@ -208,7 +188,8 @@ public class PublishedMessageTask implements Callable<PublishedMessageTaskResult
     @NotNull
     private CompletableFuture<Void> sendMessageToKafkaAsync(SubscriptionEventMessage subscriptionEventMessage, Map<String, FilterEventMessageWrapper> filteredEventMessagesPerRecipient) {
         var mdcMap = MDC.getCopyOfContextMap();
-        return CompletableFuture.runAsync(tracer.withCurrentTraceContext(() -> {
+        try {
+            return CompletableFuture.runAsync(tracer.withCurrentTraceContext(() -> {
             MDC.setContextMap(mdcMap);
             var multiplexSpan = tracer.startScopedSpan("multiplex message");
 
@@ -234,6 +215,14 @@ public class PublishedMessageTask implements Callable<PublishedMessageTaskResult
                 MDC.clear();
             }
         }), taskExecutor);
+        } catch (RejectedExecutionException e) {
+            log.warn("Subscription thread pool queue full for subscription {}", subscriptionEventMessage.getSubscriptionId());
+            factory.incrementSubscriptionThreadPoolSaturatedCounter();
+            // Return a failed future to maintain error handling flow
+            CompletableFuture<Void> failedFuture = new CompletableFuture<>();
+            failedFuture.completeExceptionally(e);
+            return failedFuture;
+        }
     }
 
     /**

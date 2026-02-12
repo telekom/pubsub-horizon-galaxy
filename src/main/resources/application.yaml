@@ -49,10 +49,13 @@ pandora:
     name: horizon
 
 galaxy:
-  batch-core-threadpool-size: ${GALAXY_CORE_THREADPOOL_SIZE:5}
-  batch-max-threadpool-size: ${GALAXY_MAX_THREADPOOL_SIZE:100}
-  subscription-core-threadpool-size: ${GALAXY_SUBSCRIPTION_CORE_THREADPOOL_SIZE:10}
-  subscription-max-threadpool-size: ${GALAXY_SUBSCRIPTION_MAX_THREADPOOL_SIZE:20}
+  batch-core-threadpool-size: ${GALAXY_CORE_THREADPOOL_SIZE:10}
+  batch-max-threadpool-size: ${GALAXY_MAX_THREADPOOL_SIZE:50}
+  batch-queue-capacity: ${GALAXY_BATCH_QUEUE_CAPACITY:100}
+  subscription-core-threadpool-size: ${GALAXY_SUBSCRIPTION_CORE_THREADPOOL_SIZE:20}
+  subscription-max-threadpool-size: ${GALAXY_SUBSCRIPTION_MAX_THREADPOOL_SIZE:50}
+  subscription-queue-capacity: ${GALAXY_SUBSCRIPTION_QUEUE_CAPACITY:200}
+  nack-sleep-duration-ms: ${GALAXY_NACK_SLEEP_DURATION_MS:5000}
   default-environment: ${GALAXY_DEFAULT_ENVIRONMENT:default}
   feature-jsonpath-filtering-enabled: ${GALAXY_FEATURE_JSONPATH_FILTERING_ENABLED:false}
   feature-jsonpath-filtering-event-types: ${GALAXY_FEATURE_JSONPATH_FILTERING_EVENT_TYPES:}

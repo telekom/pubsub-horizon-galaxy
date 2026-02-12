@@ -10,6 +10,7 @@ import de.telekom.horizon.galaxy.config.GalaxyConfig;
 import de.telekom.horizon.galaxy.kafka.KafkaConsumerHealthIndicator;
 import de.telekom.horizon.galaxy.kafka.PublishedMessageListener;
 import de.telekom.horizon.galaxy.kafka.PublishedMessageTaskFactory;
+import io.micrometer.core.instrument.MeterRegistry;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.common.errors.AuthenticationException;
 import org.apache.kafka.common.errors.AuthorizationException;
@@ -86,10 +87,11 @@ public class KafkaConsumerConfig {
                                                                                                  ConsumerFactory<String, String> consumerFactory,
                                                                                                  GalaxyConfig galaxyConfig,
                                                                                                  HorizonTracer horizonTracer,
-                                                                                                 CommonErrorHandler kafkaErrorHandler) {
+                                                                                                 CommonErrorHandler kafkaErrorHandler,
+                                                                                                 MeterRegistry meterRegistry) {
         var containerProperties = new ContainerProperties(galaxyConfig.getConsumingTopic());
         containerProperties.setAckMode(ContainerProperties.AckMode.MANUAL);
-        containerProperties.setMessageListener(new PublishedMessageListener(publishedMessageTaskFactory, horizonTracer, galaxyConfig));
+        containerProperties.setMessageListener(new PublishedMessageListener(publishedMessageTaskFactory, horizonTracer, galaxyConfig, meterRegistry));
         ConcurrentMessageListenerContainer<String, String> listenerContainer = new ConcurrentMessageListenerContainer<>(consumerFactory, containerProperties);
         listenerContainer.setAutoStartup(false);
         listenerContainer.setConcurrency(props.getPartitionCount());

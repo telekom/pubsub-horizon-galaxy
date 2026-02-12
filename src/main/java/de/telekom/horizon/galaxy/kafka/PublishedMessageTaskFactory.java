@@ -14,11 +14,19 @@ import de.telekom.eni.pandora.horizon.tracing.HorizonTracer;
 import de.telekom.horizon.galaxy.cache.PayloadSizeHistogramCache;
 import de.telekom.horizon.galaxy.cache.SubscriberCache;
 import de.telekom.horizon.galaxy.config.GalaxyConfig;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Tag;
+import io.micrometer.core.instrument.binder.jvm.ExecutorServiceMetrics;
 import lombok.Getter;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.stereotype.Component;
+
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ThreadPoolExecutor;
 
 /**
  * Factory for creating tasks associated with a published message.
@@ -39,9 +47,12 @@ public class PublishedMessageTaskFactory {
     private final PayloadSizeHistogramCache outgoingPayloadSizeHistogramCache;
     private final GalaxyConfig galaxyConfig;
     private final ObjectMapper objectMapper;
+    private final MeterRegistry meterRegistry;
+    private final ThreadPoolTaskExecutor subscriptionTaskExecutor;
+    private final Counter subscriptionThreadPoolSaturatedCounter;
 
     @Autowired
-    public PublishedMessageTaskFactory(HorizonTracer tracer, EventWriter eventWriter, HorizonMetricsHelper metricsHelper, SubscriberCache subscriptionCache, DeDuplicationService deDuplicationService, KafkaProperties kafkaProperties, @Qualifier("incomingPayloadSizeCache") PayloadSizeHistogramCache incomingPayloadSizeCache, @Qualifier("outgoingPayloadSizeCache") PayloadSizeHistogramCache outgoingPayloadSizeHistogramCache, GalaxyConfig galaxyConfig, ObjectMapper objectMapper) {
+    public PublishedMessageTaskFactory(HorizonTracer tracer, EventWriter eventWriter, HorizonMetricsHelper metricsHelper, SubscriberCache subscriptionCache, DeDuplicationService deDuplicationService, KafkaProperties kafkaProperties, @Qualifier("incomingPayloadSizeCache") PayloadSizeHistogramCache incomingPayloadSizeCache, @Qualifier("outgoingPayloadSizeCache") PayloadSizeHistogramCache outgoingPayloadSizeHistogramCache, GalaxyConfig galaxyConfig, ObjectMapper objectMapper, MeterRegistry meterRegistry) {
         this.tracer = tracer;
         this.eventWriter = eventWriter;
         this.metricsHelper = metricsHelper;
@@ -52,9 +63,37 @@ public class PublishedMessageTaskFactory {
         this.outgoingPayloadSizeHistogramCache = outgoingPayloadSizeHistogramCache;
         this.galaxyConfig = galaxyConfig;
         this.objectMapper = objectMapper;
+        this.meterRegistry = meterRegistry;
+        this.subscriptionTaskExecutor = initSubscriptionThreadPoolTaskExecutor();
+        this.subscriptionThreadPoolSaturatedCounter = Counter.builder("galaxy.subscription.threadpool.saturated")
+                .description("Number of times the subscription thread pool rejected tasks due to queue saturation")
+                .tag("type", "multiplex")
+                .register(meterRegistry);
+    }
+
+    private ThreadPoolTaskExecutor initSubscriptionThreadPoolTaskExecutor() {
+        final ThreadPoolTaskExecutor threadPoolTaskExecutor = new ThreadPoolTaskExecutor();
+        threadPoolTaskExecutor.setThreadGroupName("multiplex");
+        threadPoolTaskExecutor.setThreadNamePrefix("multiplex-");
+        threadPoolTaskExecutor.setCorePoolSize(galaxyConfig.getSubscriptionCoreThreadPoolSize());
+        threadPoolTaskExecutor.setMaxPoolSize(galaxyConfig.getSubscriptionMaxThreadPoolSize());
+        threadPoolTaskExecutor.setQueueCapacity(galaxyConfig.getSubscriptionQueueCapacity());
+        threadPoolTaskExecutor.setRejectedExecutionHandler(new ThreadPoolExecutor.AbortPolicy());
+        threadPoolTaskExecutor.setPrestartAllCoreThreads(true);
+        threadPoolTaskExecutor.afterPropertiesSet();
+        
+        // Register metrics for the thread pool
+        ExecutorServiceMetrics.monitor(meterRegistry, threadPoolTaskExecutor.getThreadPoolExecutor(), 
+            "galaxy.subscription.threadpool", Tag.of("type", "multiplex"));
+        
+        return threadPoolTaskExecutor;
     }
 
     public PublishedMessageTask newTask(ConsumerRecord<String, String> consumerRecord) {
         return new PublishedMessageTask(consumerRecord, this);
+    }
+
+    public void incrementSubscriptionThreadPoolSaturatedCounter() {
+        subscriptionThreadPoolSaturatedCounter.increment();
     }
 }
