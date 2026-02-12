@@ -64,11 +64,13 @@ public class PublishedMessageTask implements Callable<PublishedMessageTaskResult
     private final PayloadSizeHistogramCache incomingPayloadSizeCache;
     private final PayloadSizeHistogramCache outgoingPayloadSizeHistogramCache;
     private final GalaxyConfig galaxyConfig;
+    private final PublishedMessageTaskFactory factory;
 
     private final ThreadPoolTaskExecutor taskExecutor;
 
     public PublishedMessageTask(ConsumerRecord<String, String> consumerRecord, PublishedMessageTaskFactory factory) {
         this.consumerRecord = consumerRecord;
+        this.factory = factory;
 
         this.tracer = factory.getTracer();
         this.eventWriter = factory.getEventWriter();
@@ -81,6 +83,7 @@ public class PublishedMessageTask implements Callable<PublishedMessageTaskResult
         this.galaxyConfig = factory.getGalaxyConfig();
 
         taskExecutor = initThreadPoolTaskExecutor(factory);
+        factory.getMultiplexPoolCount().incrementAndGet();
     }
 
     @NotNull
@@ -194,6 +197,7 @@ public class PublishedMessageTask implements Callable<PublishedMessageTaskResult
      */
     private void shutdownTaskExecutorAndFinishSpan(Span span) {
         taskExecutor.shutdown();
+        factory.getMultiplexPoolCount().decrementAndGet();
         MDC.clear();
         span.finish();
     }
@@ -209,29 +213,34 @@ public class PublishedMessageTask implements Callable<PublishedMessageTaskResult
     private CompletableFuture<Void> sendMessageToKafkaAsync(SubscriptionEventMessage subscriptionEventMessage, Map<String, FilterEventMessageWrapper> filteredEventMessagesPerRecipient) {
         var mdcMap = MDC.getCopyOfContextMap();
         return CompletableFuture.runAsync(tracer.withCurrentTraceContext(() -> {
-            MDC.setContextMap(mdcMap);
-            var multiplexSpan = tracer.startScopedSpan("multiplex message");
-
-            var subscriptionId = subscriptionEventMessage.getSubscriptionId();
-            var subscriptionFilter = filteredEventMessagesPerRecipient.get(subscriptionId);
-
-            recordOutgoingPayloadSize(subscriptionEventMessage);
-            enrichTracing(multiplexSpan, subscriptionEventMessage, subscriptionFilter);
-
+            factory.getMultiplexActiveThreads().incrementAndGet();
             try {
-                sendOutgoingMessage(subscriptionFilter, subscriptionEventMessage);
-                log.info("Successfully sent SubscriptionEventMessage for subscription {}.", subscriptionId);
-                trackEventForDeduplication(subscriptionEventMessage);
-            } catch (ExecutionException | JsonProcessingException | InterruptedException e) {
-                log.error("An error occurred while sending SubscriptionEventMessage for subscription {}!", subscriptionId, e);
-                sendFailedStatusMessage(subscriptionEventMessage);
-                trackEventForDeduplication(subscriptionEventMessage);
-            } finally {
-                var tags = metricsHelper.buildTagsFromSubscriptionEventMessage(subscriptionEventMessage);
-                metricsHelper.getRegistry().counter(METRIC_MULTIPLEXED_EVENTS, tags).increment();
-                multiplexSpan.finish();
+                MDC.setContextMap(mdcMap);
+                var multiplexSpan = tracer.startScopedSpan("multiplex message");
 
-                MDC.clear();
+                var subscriptionId = subscriptionEventMessage.getSubscriptionId();
+                var subscriptionFilter = filteredEventMessagesPerRecipient.get(subscriptionId);
+
+                recordOutgoingPayloadSize(subscriptionEventMessage);
+                enrichTracing(multiplexSpan, subscriptionEventMessage, subscriptionFilter);
+
+                try {
+                    sendOutgoingMessage(subscriptionFilter, subscriptionEventMessage);
+                    log.info("Successfully sent SubscriptionEventMessage for subscription {}.", subscriptionId);
+                    trackEventForDeduplication(subscriptionEventMessage);
+                } catch (ExecutionException | JsonProcessingException | InterruptedException e) {
+                    log.error("An error occurred while sending SubscriptionEventMessage for subscription {}!", subscriptionId, e);
+                    sendFailedStatusMessage(subscriptionEventMessage);
+                    trackEventForDeduplication(subscriptionEventMessage);
+                } finally {
+                    var tags = metricsHelper.buildTagsFromSubscriptionEventMessage(subscriptionEventMessage);
+                    metricsHelper.getRegistry().counter(METRIC_MULTIPLEXED_EVENTS, tags).increment();
+                    multiplexSpan.finish();
+
+                    MDC.clear();
+                }
+            } finally {
+                factory.getMultiplexActiveThreads().decrementAndGet();
             }
         }), taskExecutor);
     }

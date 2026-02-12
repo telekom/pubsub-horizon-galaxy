@@ -8,6 +8,8 @@ import de.telekom.eni.pandora.horizon.model.event.PublishedEventMessage;
 import de.telekom.eni.pandora.horizon.tracing.HorizonTracer;
 import de.telekom.horizon.galaxy.config.GalaxyConfig;
 import de.telekom.horizon.galaxy.model.PublishedMessageTaskResult;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.binder.jvm.ExecutorServiceMetrics;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.jetbrains.annotations.NotNull;
@@ -18,6 +20,7 @@ import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
@@ -42,12 +45,17 @@ public class PublishedMessageListener extends AbstractConsumerSeekAware implemen
     private final HorizonTracer tracer;
 
 
-    public PublishedMessageListener(PublishedMessageTaskFactory publishedMessageTaskFactory, HorizonTracer horizonTracer, GalaxyConfig galaxyConfig) {
+    public PublishedMessageListener(PublishedMessageTaskFactory publishedMessageTaskFactory, HorizonTracer horizonTracer, GalaxyConfig galaxyConfig, MeterRegistry meterRegistry) {
         super();
         this.publishedMessageTaskFactory = publishedMessageTaskFactory;
         this.tracer = horizonTracer;
 
         this.taskExecutor = initThreadPoolTaskExecutor(galaxyConfig);
+
+        ExecutorServiceMetrics.monitor(meterRegistry,
+                this.taskExecutor.getThreadPoolExecutor(),
+                "batchTaskExecutor",
+                Collections.emptyList());
     }
 
     @NotNull

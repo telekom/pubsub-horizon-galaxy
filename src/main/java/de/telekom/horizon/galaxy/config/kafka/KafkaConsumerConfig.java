@@ -9,6 +9,7 @@ import de.telekom.eni.pandora.horizon.tracing.HorizonTracer;
 import de.telekom.horizon.galaxy.config.GalaxyConfig;
 import de.telekom.horizon.galaxy.kafka.PublishedMessageListener;
 import de.telekom.horizon.galaxy.kafka.PublishedMessageTaskFactory;
+import io.micrometer.core.instrument.MeterRegistry;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Bean;
@@ -34,10 +35,11 @@ public class KafkaConsumerConfig {
                                                                                                  KafkaProperties props,
                                                                                                  ConsumerFactory<String, String> consumerFactory,
                                                                                                  GalaxyConfig galaxyConfig,
-                                                                                                 HorizonTracer horizonTracer) {
+                                                                                                 HorizonTracer horizonTracer,
+                                                                                                 MeterRegistry meterRegistry) {
         var containerProperties = new ContainerProperties(galaxyConfig.getConsumingTopic());
         containerProperties.setAckMode(ContainerProperties.AckMode.MANUAL);
-        containerProperties.setMessageListener(new PublishedMessageListener(publishedMessageTaskFactory, horizonTracer, galaxyConfig));
+        containerProperties.setMessageListener(new PublishedMessageListener(publishedMessageTaskFactory, horizonTracer, galaxyConfig, meterRegistry));
         ConcurrentMessageListenerContainer<String, String> listenerContainer = new ConcurrentMessageListenerContainer<>(consumerFactory, containerProperties);
         listenerContainer.setAutoStartup(false);
         listenerContainer.setConcurrency(props.getPartitionCount());
