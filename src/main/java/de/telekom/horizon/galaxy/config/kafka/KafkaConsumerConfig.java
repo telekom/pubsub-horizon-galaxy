@@ -77,8 +77,6 @@ public class KafkaConsumerConfig {
                 if (isFatalException(exception)) {
                     log.error("Fatal Kafka consumer exception occurred. Shutting down the application.", exception);
                     healthIndicator.markUnhealthy("Fatal Kafka exception: " + exception.getClass().getSimpleName() + " - " + exception.getMessage());
-                    container.stop();
-                    SpringApplication.exit(applicationContext, () -> 1);
                 } else {
                     // Delegate to default behavior for other exceptions
                     super.handleOtherException(exception, consumer, container, batchListener);
