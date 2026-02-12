@@ -14,6 +14,7 @@ import org.apache.kafka.common.errors.AuthenticationException;
 import org.apache.kafka.common.errors.AuthorizationException;
 import org.apache.kafka.common.errors.FencedInstanceIdException;
 import org.apache.kafka.common.errors.InterruptException;
+import org.jetbrains.annotations.NotNull;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.SpringApplication;
 import org.springframework.context.ApplicationContext;
@@ -56,26 +57,26 @@ public class KafkaConsumerConfig {
      * Creates a custom error handler that shuts down the application when a fatal exception occurs
      * during Kafka poll(). This prevents the application from being stuck in an unhealthy state
      * when unrecoverable errors occur outside of record processing.
-     *
      * Fatal exceptions include:
      * - InterruptException / InterruptedException: Thread interrupted during poll
      * - AuthenticationException: SASL/SSL authentication failed
      * - AuthorizationException: No permission to access topic/group
      * - FencedInstanceIdException: Static member fenced by another instance
      * - IllegalStateException: Consumer in invalid state
-     *
      * Record-level exceptions use the default behavior (retry + log + skip).
      *
+     * @param healthIndicator Health indicator to mark as unhealthy on fatal exceptions
      * @return CommonErrorHandler that handles fatal exceptions during poll() by stopping the application
      */
     @Bean
-    public CommonErrorHandler kafkaErrorHandler() {
+    public CommonErrorHandler kafkaErrorHandler(KafkaConsumerHealthIndicator healthIndicator) {
         return new DefaultErrorHandler() {
             @Override
-            public void handleOtherException(Exception exception, org.apache.kafka.clients.consumer.Consumer<?, ?> consumer,
-                                             MessageListenerContainer container, boolean batchListener) {
+            public void handleOtherException(@NotNull Exception exception, @NotNull org.apache.kafka.clients.consumer.Consumer<?, ?> consumer,
+                                             @NotNull MessageListenerContainer container, boolean batchListener) {
                 if (isFatalException(exception)) {
                     log.error("Fatal Kafka consumer exception occurred. Shutting down the application.", exception);
+                    healthIndicator.markUnhealthy("Fatal Kafka exception: " + exception.getClass().getSimpleName() + " - " + exception.getMessage());
                     container.stop();
                     SpringApplication.exit(applicationContext, () -> 1);
                 } else {

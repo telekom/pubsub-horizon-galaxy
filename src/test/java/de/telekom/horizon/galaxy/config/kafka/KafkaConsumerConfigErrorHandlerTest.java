@@ -21,6 +21,7 @@ import org.springframework.kafka.listener.CommonErrorHandler;
 import org.springframework.kafka.listener.MessageListenerContainer;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
@@ -40,13 +41,15 @@ class KafkaConsumerConfigErrorHandlerTest {
     @Mock
     private MessageListenerContainer container;
 
-    private KafkaConsumerConfig kafkaConsumerConfig;
+    @Mock
+    private KafkaConsumerHealthIndicator healthIndicator;
+
     private CommonErrorHandler errorHandler;
 
     @BeforeEach
     void setUp() {
-        kafkaConsumerConfig = new KafkaConsumerConfig(applicationContext);
-        errorHandler = kafkaConsumerConfig.kafkaErrorHandler();
+        KafkaConsumerConfig kafkaConsumerConfig = new KafkaConsumerConfig(applicationContext);
+        errorHandler = kafkaConsumerConfig.kafkaErrorHandler(healthIndicator);
     }
 
     @Test
@@ -62,7 +65,8 @@ class KafkaConsumerConfigErrorHandlerTest {
             // When: handleOtherException is called
             errorHandler.handleOtherException(wrappedException, consumer, container, false);
 
-            // Then: Container should be stopped and application should exit
+            // Then: Health indicator should be marked unhealthy, container stopped, and application should exit
+            verify(healthIndicator).markUnhealthy(contains("IllegalStateException"));
             verify(container).stop();
             springAppMock.verify(() -> SpringApplication.exit(eq(applicationContext), any()));
         }
@@ -79,7 +83,8 @@ class KafkaConsumerConfigErrorHandlerTest {
             // When: handleOtherException is called
             errorHandler.handleOtherException(interruptException, consumer, container, false);
 
-            // Then: Container should be stopped and application should exit
+            // Then: Health indicator should be marked unhealthy, container stopped, and application should exit
+            verify(healthIndicator).markUnhealthy(contains("InterruptException"));
             verify(container).stop();
             springAppMock.verify(() -> SpringApplication.exit(eq(applicationContext), any()));
         }
@@ -96,7 +101,8 @@ class KafkaConsumerConfigErrorHandlerTest {
             // When: handleOtherException is called
             errorHandler.handleOtherException(wrappedException, consumer, container, false);
 
-            // Then: Container should be stopped and application should exit
+            // Then: Health indicator should be marked unhealthy, container stopped, and application should exit
+            verify(healthIndicator).markUnhealthy(contains("RuntimeException"));
             verify(container).stop();
             springAppMock.verify(() -> SpringApplication.exit(eq(applicationContext), any()));
         }
@@ -113,7 +119,8 @@ class KafkaConsumerConfigErrorHandlerTest {
             // When: handleOtherException is called
             errorHandler.handleOtherException(authException, consumer, container, false);
 
-            // Then: Container should be stopped and application should exit
+            // Then: Health indicator should be marked unhealthy, container stopped, and application should exit
+            verify(healthIndicator).markUnhealthy(contains("AuthenticationException"));
             verify(container).stop();
             springAppMock.verify(() -> SpringApplication.exit(eq(applicationContext), any()));
         }
@@ -130,7 +137,8 @@ class KafkaConsumerConfigErrorHandlerTest {
             // When: handleOtherException is called
             errorHandler.handleOtherException(authzException, consumer, container, false);
 
-            // Then: Container should be stopped and application should exit
+            // Then: Health indicator should be marked unhealthy, container stopped, and application should exit
+            verify(healthIndicator).markUnhealthy(contains("AuthorizationException"));
             verify(container).stop();
             springAppMock.verify(() -> SpringApplication.exit(eq(applicationContext), any()));
         }
@@ -147,7 +155,8 @@ class KafkaConsumerConfigErrorHandlerTest {
             // When: handleOtherException is called
             errorHandler.handleOtherException(fencedException, consumer, container, false);
 
-            // Then: Container should be stopped and application should exit
+            // Then: Health indicator should be marked unhealthy, container stopped, and application should exit
+            verify(healthIndicator).markUnhealthy(contains("FencedInstanceIdException"));
             verify(container).stop();
             springAppMock.verify(() -> SpringApplication.exit(eq(applicationContext), any()));
         }
@@ -164,7 +173,8 @@ class KafkaConsumerConfigErrorHandlerTest {
             // When: handleOtherException is called
             errorHandler.handleOtherException(illegalStateException, consumer, container, false);
 
-            // Then: Container should be stopped and application should exit
+            // Then: Health indicator should be marked unhealthy, container stopped, and application should exit
+            verify(healthIndicator).markUnhealthy(contains("IllegalStateException"));
             verify(container).stop();
             springAppMock.verify(() -> SpringApplication.exit(eq(applicationContext), any()));
         }
@@ -185,7 +195,8 @@ class KafkaConsumerConfigErrorHandlerTest {
                 // Expected - default handler may throw for non-record exceptions
             }
 
-            // Then: Container should NOT be stopped by our handler
+            // Then: Health indicator should NOT be marked unhealthy, container should NOT be stopped
+            verify(healthIndicator, never()).markUnhealthy(any());
             verify(container, never()).stop();
             springAppMock.verify(() -> SpringApplication.exit(any(), any()), never());
         }
