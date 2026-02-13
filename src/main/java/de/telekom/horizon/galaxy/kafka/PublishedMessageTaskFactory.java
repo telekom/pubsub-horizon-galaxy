@@ -14,6 +14,8 @@ import de.telekom.eni.pandora.horizon.tracing.HorizonTracer;
 import de.telekom.horizon.galaxy.cache.PayloadSizeHistogramCache;
 import de.telekom.horizon.galaxy.cache.SubscriberCache;
 import de.telekom.horizon.galaxy.config.GalaxyConfig;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
 import lombok.Getter;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
@@ -43,6 +45,8 @@ public class PublishedMessageTaskFactory {
     private final GalaxyConfig galaxyConfig;
     private final ObjectMapper objectMapper;
 
+    private final Counter multiplexPoolsCreated;
+    private final Counter multiplexTasksCompleted;
     private final AtomicInteger multiplexActiveThreads = new AtomicInteger(0);
     private final AtomicInteger multiplexPoolCount = new AtomicInteger(0);
 
@@ -58,6 +62,20 @@ public class PublishedMessageTaskFactory {
         this.outgoingPayloadSizeHistogramCache = outgoingPayloadSizeHistogramCache;
         this.galaxyConfig = galaxyConfig;
         this.objectMapper = objectMapper;
+
+        this.multiplexPoolsCreated = Counter.builder("galaxy.multiplex.pools.created")
+                .description("Total number of multiplex thread pools created")
+                .register(meterRegistry);
+        this.multiplexTasksCompleted = Counter.builder("galaxy.multiplex.tasks.completed")
+                .description("Total number of multiplex send tasks completed")
+                .register(meterRegistry);
+
+        Gauge.builder("galaxy.multiplex.pool.core.size", galaxyConfig, GalaxyConfig::getSubscriptionCoreThreadPoolSize)
+                .description("Configured core pool size for multiplex thread pools")
+                .register(meterRegistry);
+        Gauge.builder("galaxy.multiplex.pool.max.size", galaxyConfig, GalaxyConfig::getSubscriptionMaxThreadPoolSize)
+                .description("Configured max pool size for multiplex thread pools")
+                .register(meterRegistry);
 
         meterRegistry.gauge("galaxy.multiplex.active.threads", multiplexActiveThreads);
         meterRegistry.gauge("galaxy.multiplex.pool.count", multiplexPoolCount);

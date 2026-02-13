@@ -83,6 +83,7 @@ public class PublishedMessageTask implements Callable<PublishedMessageTaskResult
         this.galaxyConfig = factory.getGalaxyConfig();
 
         taskExecutor = initThreadPoolTaskExecutor(factory);
+        factory.getMultiplexPoolsCreated().increment();
         factory.getMultiplexPoolCount().incrementAndGet();
     }
 
@@ -236,6 +237,7 @@ public class PublishedMessageTask implements Callable<PublishedMessageTaskResult
                     var tags = metricsHelper.buildTagsFromSubscriptionEventMessage(subscriptionEventMessage);
                     metricsHelper.getRegistry().counter(METRIC_MULTIPLEXED_EVENTS, tags).increment();
                     multiplexSpan.finish();
+                    factory.getMultiplexTasksCompleted().increment();
 
                     MDC.clear();
                 }
