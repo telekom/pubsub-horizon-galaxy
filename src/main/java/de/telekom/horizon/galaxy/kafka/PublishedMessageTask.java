@@ -96,6 +96,8 @@ public class PublishedMessageTask implements Callable<PublishedMessageTaskResult
             } catch (JsonProcessingException e) {
                 log.error("JsonProcessingException occurred while parsing published event message with key {}!", consumerRecord.key(), e);
 
+                // Better to move to DLQ for messages that are not parseable
+
                 return new PublishedMessageTaskResult(true);
             }
 
@@ -135,8 +137,8 @@ public class PublishedMessageTask implements Callable<PublishedMessageTaskResult
 
             return new PublishedMessageTaskResult(isSuccessful.get());
         } finally {
-            MDC.clear();
-            span.finish();
+          span.finish();
+          MDC.clear();
         }
     }
 

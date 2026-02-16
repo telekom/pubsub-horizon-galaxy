@@ -25,6 +25,7 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.stereotype.Component;
 
+import java.util.Collections;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
 
@@ -67,7 +68,6 @@ public class PublishedMessageTaskFactory {
         this.subscriptionTaskExecutor = initSubscriptionThreadPoolTaskExecutor();
         this.subscriptionThreadPoolSaturatedCounter = Counter.builder("galaxy.subscription.threadpool.saturated")
                 .description("Number of times the subscription thread pool rejected tasks due to queue saturation")
-                .tag("type", "multiplex")
                 .register(meterRegistry);
     }
 
@@ -84,7 +84,7 @@ public class PublishedMessageTaskFactory {
         
         // Register metrics for the thread pool
         ExecutorServiceMetrics.monitor(meterRegistry, threadPoolTaskExecutor.getThreadPoolExecutor(), 
-            "galaxy.subscription.threadpool", Tag.of("type", "multiplex"));
+            "subscriptionTaskExecutor", Collections.emptyList());
         
         return threadPoolTaskExecutor;
     }

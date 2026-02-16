@@ -22,6 +22,7 @@ import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
@@ -61,7 +62,6 @@ public class PublishedMessageListener extends AbstractConsumerSeekAware implemen
         this.taskExecutor = initThreadPoolTaskExecutor(galaxyConfig, meterRegistry);
         this.threadPoolSaturatedCounter = Counter.builder("galaxy.batch.threadpool.saturated")
                 .description("Number of times the batch thread pool rejected tasks due to queue saturation")
-                .tag("type", "batch")
                 .register(meterRegistry);
         this.nackCounter = Counter.builder("galaxy.kafka.listener.nacks")
                 .description("Total number of batch nacks")
@@ -88,7 +88,7 @@ public class PublishedMessageListener extends AbstractConsumerSeekAware implemen
         
         // Register metrics for the thread pool
         ExecutorServiceMetrics.monitor(meterRegistry, threadPoolTaskExecutor.getThreadPoolExecutor(), 
-            "galaxy.batch.threadpool", Tag.of("type", "batch"));
+            "batchTaskExecutor", Collections.emptyList());
         
         return threadPoolTaskExecutor;
     }
@@ -128,9 +128,12 @@ public class PublishedMessageListener extends AbstractConsumerSeekAware implemen
                     taskFailureIndex = index;
                 }
             } catch (ExecutionException | InterruptedException e) {
-                log.error("Unexpected error processing event task", e);
-                Thread.currentThread().interrupt();
-                throw new RuntimeException(e);
+                log.error("Unexpected error processing event task at index {}", index, e);
+                if (e instanceof InterruptedException) {
+                    Thread.currentThread().interrupt();
+                }
+                taskFailureIndex = index;
+                break;
             }
         }
 
