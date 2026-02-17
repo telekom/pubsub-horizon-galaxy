@@ -4,6 +4,7 @@
 
 package de.telekom.horizon.galaxy.config.kafka;
 
+import de.telekom.horizon.galaxy.kafka.KafkaConsumerHealthIndicator;
 import org.apache.kafka.clients.consumer.Consumer;
 import org.apache.kafka.common.errors.AuthenticationException;
 import org.apache.kafka.common.errors.AuthorizationException;
@@ -47,8 +48,8 @@ class KafkaConsumerConfigErrorHandlerTest {
     }
 
     @Test
-    void shouldMarkUnhealthyOnInterruptException() {
-        // Given: An InterruptException wrapped in IllegalStateException
+    void shouldMarkUnhealthyOnWrappedInterruptException() {
+        // Given: A Kafka InterruptException wrapped in IllegalStateException
         InterruptException interruptException = new InterruptException(new InterruptedException("Test interrupt"));
         IllegalStateException wrappedException = new IllegalStateException(
                 "This error handler cannot process 'InterruptException's", interruptException);
@@ -126,7 +127,7 @@ class KafkaConsumerConfigErrorHandlerTest {
         TimeoutException timeoutException = new TimeoutException("Timeout during fetch");
 
         // When: handleOtherException is called
-        // Note: This will call super.handleOtherException which may throw, so we catch it
+        // Note: This will call super.handleOtherException which may throw an exception
         try {
             errorHandler.handleOtherException(timeoutException, consumer, container, false);
         } catch (Exception e) {

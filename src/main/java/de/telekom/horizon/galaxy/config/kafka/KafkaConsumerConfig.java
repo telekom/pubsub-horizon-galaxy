@@ -7,6 +7,7 @@ package de.telekom.horizon.galaxy.config.kafka;
 import de.telekom.eni.pandora.horizon.kafka.config.KafkaProperties;
 import de.telekom.eni.pandora.horizon.tracing.HorizonTracer;
 import de.telekom.horizon.galaxy.config.GalaxyConfig;
+import de.telekom.horizon.galaxy.kafka.KafkaConsumerHealthIndicator;
 import de.telekom.horizon.galaxy.kafka.PublishedMessageListener;
 import de.telekom.horizon.galaxy.kafka.PublishedMessageTaskFactory;
 import lombok.extern.slf4j.Slf4j;
@@ -30,30 +31,11 @@ import org.springframework.kafka.listener.MessageListenerContainer;
 @Slf4j
 public class KafkaConsumerConfig {
 
-    private static boolean isFatalException(Throwable exception) {
-        if (exception == null) {
-            return false;
-        }
-        if (exception instanceof InterruptedException ||
-            exception instanceof InterruptException ||
-            exception instanceof AuthenticationException ||
-            exception instanceof AuthorizationException ||
-            exception instanceof FencedInstanceIdException) {
-            return true;
-        }
-        return isFatalException(exception.getCause());
-    }
-
     /**
      * Creates a custom error handler that shuts down the application when a fatal exception occurs
      * during Kafka poll(). This prevents the application from being stuck in an unhealthy state
-     * when unrecoverable errors occur outside of record processing.
-     * Fatal exceptions include:
-     * - InterruptException / InterruptedException: Thread interrupted during poll
-     * - AuthenticationException: SASL/SSL authentication failed
-     * - AuthorizationException: No permission to access topic/group
-     * - FencedInstanceIdException: Static member fenced by another instance
-     * Record-level exceptions use the default behavior (retry + log + skip).
+     * when unrecoverable errors occur outside of record processing. Record-level exceptions use the 
+     * default behavior (retry + log + skip).
      *
      * @param healthIndicator Health indicator to mark as unhealthy on fatal exceptions
      * @return CommonErrorHandler that handles fatal exceptions during poll() by stopping the application
@@ -101,4 +83,23 @@ public class KafkaConsumerConfig {
         return listenerContainer;
     }
 
+    /**
+     * Checks if the given exception or any of its causes is a fatal Kafka exception.
+     *
+     * @param exception The exception to check
+     * @return true if the exception or any cause is fatal, false otherwise
+     */
+    private static boolean isFatalException(Throwable exception) {
+        if (exception == null) {
+            return false;
+        }
+        if (exception instanceof InterruptedException ||
+            exception instanceof InterruptException ||
+            exception instanceof AuthenticationException ||
+            exception instanceof AuthorizationException ||
+            exception instanceof FencedInstanceIdException) {
+            return true;
+        }
+        return isFatalException(exception.getCause());
+    }
 }

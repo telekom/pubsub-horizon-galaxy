@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-package de.telekom.horizon.galaxy.config.kafka;
+package de.telekom.horizon.galaxy.kafka;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
