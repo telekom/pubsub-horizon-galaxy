@@ -32,13 +32,22 @@ import org.springframework.kafka.listener.MessageListenerContainer;
 public class KafkaConsumerConfig {
 
     /**
-     * Creates a custom error handler that shuts down the application when a fatal exception occurs
-     * during Kafka poll(). This prevents the application from being stuck in an unhealthy state
-     * when unrecoverable errors occur outside of record processing. Record-level exceptions use the 
-     * default behavior (retry + log + skip).
+     * Creates a custom error handler that marks the application as unhealthy when a fatal exception
+     * occurs during Kafka poll(). This allows Kubernetes to detect the unhealthy state via the
+     * health endpoint and restart the pod.
+     *
+     * <p>Fatal exceptions include:</p>
+     * <ul>
+     *   <li>{@link InterruptException} / {@link InterruptedException} - Thread interrupted during poll</li>
+     *   <li>{@link AuthenticationException} - SASL/SSL authentication failed</li>
+     *   <li>{@link AuthorizationException} - No permission to access topic/group</li>
+     *   <li>{@link FencedInstanceIdException} - Static member fenced by another instance</li>
+     * </ul>
+     *
+     * <p>Record-level exceptions use the default behavior (retry + log + skip).</p>
      *
      * @param healthIndicator Health indicator to mark as unhealthy on fatal exceptions
-     * @return CommonErrorHandler that handles fatal exceptions during poll() by stopping the application
+     * @return CommonErrorHandler that handles fatal exceptions during poll() by marking health as DOWN
      */
     @Bean
     public CommonErrorHandler kafkaErrorHandler(KafkaConsumerHealthIndicator healthIndicator) {
@@ -47,7 +56,7 @@ public class KafkaConsumerConfig {
             public void handleOtherException(@NotNull Exception exception, @NotNull org.apache.kafka.clients.consumer.Consumer<?, ?> consumer,
                                              @NotNull MessageListenerContainer container, boolean batchListener) {
                 if (isFatalException(exception)) {
-                    log.error("Fatal Kafka consumer exception occurred. Shutting down the application.", exception);
+                    log.error("Fatal Kafka consumer exception occurred. Marking health as DOWN.", exception);
                     healthIndicator.markUnhealthy("Fatal Kafka exception: " + exception.getClass().getSimpleName() + " - " + exception.getMessage());
                 } else {
                     // Delegate to default behavior for other exceptions

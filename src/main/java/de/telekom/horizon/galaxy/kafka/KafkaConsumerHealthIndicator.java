@@ -8,6 +8,7 @@ import org.springframework.boot.actuate.health.Health;
 import org.springframework.boot.actuate.health.HealthIndicator;
 import org.springframework.stereotype.Component;
 
+import java.time.Instant;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -20,6 +21,7 @@ public class KafkaConsumerHealthIndicator implements HealthIndicator {
 
     private final AtomicBoolean healthy = new AtomicBoolean(true);
     private final AtomicReference<String> errorMessage = new AtomicReference<>();
+    private final AtomicReference<Instant> errorTimestamp = new AtomicReference<>();
 
     /**
      * Marks the Kafka consumer as unhealthy due to a fatal exception.
@@ -29,6 +31,7 @@ public class KafkaConsumerHealthIndicator implements HealthIndicator {
     public void markUnhealthy(String reason) {
         healthy.set(false);
         errorMessage.set(reason);
+        errorTimestamp.set(Instant.now());
     }
 
     @Override
@@ -38,6 +41,7 @@ public class KafkaConsumerHealthIndicator implements HealthIndicator {
         }
         return Health.down()
                 .withDetail("error", errorMessage.get())
+                .withDetail("since", errorTimestamp.get().toString())
                 .build();
     }
 }

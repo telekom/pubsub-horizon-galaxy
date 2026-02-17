@@ -49,16 +49,16 @@ class KafkaConsumerConfigErrorHandlerTest {
 
     @Test
     void shouldMarkUnhealthyOnWrappedInterruptException() {
-        // Given: A Kafka InterruptException wrapped in IllegalStateException
+        // Given: A Kafka InterruptException wrapped in RuntimeException
+        // The error handler checks the cause chain, so it should find InterruptException
         InterruptException interruptException = new InterruptException(new InterruptedException("Test interrupt"));
-        IllegalStateException wrappedException = new IllegalStateException(
-                "This error handler cannot process 'InterruptException's", interruptException);
+        RuntimeException wrappedException = new RuntimeException("Wrapper exception", interruptException);
 
         // When: handleOtherException is called
         errorHandler.handleOtherException(wrappedException, consumer, container, false);
 
-        // Then: Health indicator should be marked unhealthy
-        verify(healthIndicator).markUnhealthy(contains("IllegalStateException"));
+        // Then: Health indicator should be marked unhealthy (outer exception class is used in message)
+        verify(healthIndicator).markUnhealthy(contains("RuntimeException"));
     }
 
     @Test
