@@ -16,8 +16,6 @@ import org.apache.kafka.common.errors.FencedInstanceIdException;
 import org.apache.kafka.common.errors.InterruptException;
 import org.jetbrains.annotations.NotNull;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.SpringApplication;
-import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.DependsOn;
@@ -32,13 +30,7 @@ import org.springframework.kafka.listener.MessageListenerContainer;
 @Slf4j
 public class KafkaConsumerConfig {
 
-    private final ApplicationContext applicationContext;
-
-    public KafkaConsumerConfig(ApplicationContext applicationContext) {
-        this.applicationContext = applicationContext;
-    }
-
-    private boolean isFatalException(Throwable exception) {
+    private static boolean isFatalException(Throwable exception) {
         if (exception == null) {
             return false;
         }
@@ -46,8 +38,7 @@ public class KafkaConsumerConfig {
             exception instanceof InterruptException ||
             exception instanceof AuthenticationException ||
             exception instanceof AuthorizationException ||
-            exception instanceof FencedInstanceIdException ||
-            exception instanceof IllegalStateException) {
+            exception instanceof FencedInstanceIdException) {
             return true;
         }
         return isFatalException(exception.getCause());
@@ -62,7 +53,6 @@ public class KafkaConsumerConfig {
      * - AuthenticationException: SASL/SSL authentication failed
      * - AuthorizationException: No permission to access topic/group
      * - FencedInstanceIdException: Static member fenced by another instance
-     * - IllegalStateException: Consumer in invalid state
      * Record-level exceptions use the default behavior (retry + log + skip).
      *
      * @param healthIndicator Health indicator to mark as unhealthy on fatal exceptions

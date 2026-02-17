@@ -9,12 +9,12 @@ import org.apache.kafka.common.errors.AuthenticationException;
 import org.apache.kafka.common.errors.AuthorizationException;
 import org.apache.kafka.common.errors.FencedInstanceIdException;
 import org.apache.kafka.common.errors.InterruptException;
+import org.apache.kafka.common.errors.TimeoutException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.context.ApplicationContext;
 import org.springframework.kafka.listener.CommonErrorHandler;
 import org.springframework.kafka.listener.MessageListenerContainer;
 
@@ -30,9 +30,6 @@ import static org.mockito.Mockito.*;
 class KafkaConsumerConfigErrorHandlerTest {
 
     @Mock
-    private ApplicationContext applicationContext;
-
-    @Mock
     private Consumer<?, ?> consumer;
 
     @Mock
@@ -45,7 +42,7 @@ class KafkaConsumerConfigErrorHandlerTest {
 
     @BeforeEach
     void setUp() {
-        KafkaConsumerConfig kafkaConsumerConfig = new KafkaConsumerConfig(applicationContext);
+        KafkaConsumerConfig kafkaConsumerConfig = new KafkaConsumerConfig();
         errorHandler = kafkaConsumerConfig.kafkaErrorHandler(healthIndicator);
     }
 
@@ -124,22 +121,9 @@ class KafkaConsumerConfigErrorHandlerTest {
     }
 
     @Test
-    void shouldMarkUnhealthyOnIllegalStateException() {
-        // Given: An IllegalStateException (consumer in invalid state)
-        IllegalStateException illegalStateException = new IllegalStateException("Consumer is not subscribed");
-
-        // When: handleOtherException is called
-        errorHandler.handleOtherException(illegalStateException, consumer, container, false);
-
-        // Then: Health indicator should be marked unhealthy
-        verify(healthIndicator).markUnhealthy(contains("IllegalStateException"));
-    }
-
-    @Test
     void shouldNotMarkUnhealthyOnOtherExceptions() {
         // Given: A non-fatal exception (TimeoutException is recoverable)
-        org.apache.kafka.common.errors.TimeoutException timeoutException =
-            new org.apache.kafka.common.errors.TimeoutException("Timeout during fetch");
+        TimeoutException timeoutException = new TimeoutException("Timeout during fetch");
 
         // When: handleOtherException is called
         // Note: This will call super.handleOtherException which may throw, so we catch it
