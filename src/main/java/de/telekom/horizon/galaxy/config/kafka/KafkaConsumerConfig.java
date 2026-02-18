@@ -57,7 +57,7 @@ public class KafkaConsumerConfig {
                                              @NotNull MessageListenerContainer container, boolean batchListener) {
                 if (isFatalException(exception)) {
                     log.error("Fatal Kafka consumer exception occurred. Marking health as DOWN.", exception);
-                    healthIndicator.markUnhealthy("Fatal Kafka exception: " + exception.getClass().getSimpleName() + " - " + exception.getMessage());
+                    healthIndicator.markUnhealthy("Fatal Kafka consumer exception occurred");
                 } else {
                     // Delegate to default behavior for other exceptions
                     super.handleOtherException(exception, consumer, container, batchListener);
