@@ -16,7 +16,6 @@ import de.telekom.horizon.galaxy.cache.SubscriberCache;
 import de.telekom.horizon.galaxy.config.GalaxyConfig;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
-import io.micrometer.core.instrument.Tag;
 import io.micrometer.core.instrument.binder.jvm.ExecutorServiceMetrics;
 import lombok.Getter;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
@@ -26,7 +25,6 @@ import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.stereotype.Component;
 
 import java.util.Collections;
-import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
 
 /**
@@ -66,7 +64,7 @@ public class PublishedMessageTaskFactory {
         this.objectMapper = objectMapper;
         this.meterRegistry = meterRegistry;
         this.subscriptionTaskExecutor = initSubscriptionThreadPoolTaskExecutor();
-        this.subscriptionThreadPoolSaturatedCounter = Counter.builder("galaxy.subscription.threadpool.saturated")
+        this.subscriptionThreadPoolSaturatedCounter = Counter.builder("pubsub.subscription.threadpool.saturated")
                 .description("Number of times the subscription thread pool rejected tasks due to queue saturation")
                 .register(meterRegistry);
     }

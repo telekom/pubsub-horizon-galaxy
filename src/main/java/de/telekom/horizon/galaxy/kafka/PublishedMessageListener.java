@@ -10,7 +10,6 @@ import de.telekom.horizon.galaxy.config.GalaxyConfig;
 import de.telekom.horizon.galaxy.model.PublishedMessageTaskResult;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
-import io.micrometer.core.instrument.Tag;
 import io.micrometer.core.instrument.binder.jvm.ExecutorServiceMetrics;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
@@ -24,11 +23,7 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
-import java.util.concurrent.Callable;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.Future;
-import java.util.concurrent.RejectedExecutionException;
-import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.*;
 
 /**
  * The {@code PublishedMessageListener} class is responsible for processing Kafka messages in batches.
@@ -60,16 +55,16 @@ public class PublishedMessageListener extends AbstractConsumerSeekAware implemen
         this.galaxyConfig = galaxyConfig;
 
         this.taskExecutor = initThreadPoolTaskExecutor(galaxyConfig, meterRegistry);
-        this.threadPoolSaturatedCounter = Counter.builder("galaxy.batch.threadpool.saturated")
+        this.threadPoolSaturatedCounter = Counter.builder("pubsub.batch.threadpool.saturated")
                 .description("Number of times the batch thread pool rejected tasks due to queue saturation")
                 .register(meterRegistry);
-        this.nackCounter = Counter.builder("galaxy.kafka.listener.nacks")
+        this.nackCounter = Counter.builder("pubsub.kafka.listener.nacks")
                 .description("Total number of batch nacks")
                 .register(meterRegistry);
-        this.nackDueToRejectionCounter = Counter.builder("galaxy.kafka.listener.nacks.rejection")
+        this.nackDueToRejectionCounter = Counter.builder("pubsub.kafka.listener.nacks.rejection")
                 .description("Nacks due to thread pool rejection")
                 .register(meterRegistry);
-        this.nackDueToTaskFailureCounter = Counter.builder("galaxy.kafka.listener.nacks.task_failure")
+        this.nackDueToTaskFailureCounter = Counter.builder("pubsub.kafka.listener.nacks.task_failure")
                 .description("Nacks due to task execution failure")
                 .register(meterRegistry);
     }
@@ -132,7 +127,9 @@ public class PublishedMessageListener extends AbstractConsumerSeekAware implemen
                 if (e instanceof InterruptedException) {
                     Thread.currentThread().interrupt();
                 }
-                taskFailureIndex = index;
+                if (taskFailureIndex == -1) {
+                    taskFailureIndex = index;
+                }
                 break;
             }
         }

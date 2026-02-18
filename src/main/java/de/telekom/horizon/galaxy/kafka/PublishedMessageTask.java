@@ -5,7 +5,6 @@
 package de.telekom.horizon.galaxy.kafka;
 
 import brave.ScopedSpan;
-import brave.Span;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -24,10 +23,10 @@ import de.telekom.eni.pandora.horizon.tracing.HorizonTracer;
 import de.telekom.horizon.galaxy.cache.PayloadSizeHistogramCache;
 import de.telekom.horizon.galaxy.cache.SubscriberCache;
 import de.telekom.horizon.galaxy.config.GalaxyConfig;
-import de.telekom.horizon.galaxy.model.EvaluationResultStatus;
-import de.telekom.horizon.galaxy.model.PublishedMessageTaskResult;
 import de.telekom.horizon.galaxy.filters.FilterEventMessageWrapper;
 import de.telekom.horizon.galaxy.filters.Filters;
+import de.telekom.horizon.galaxy.model.EvaluationResultStatus;
+import de.telekom.horizon.galaxy.model.PublishedMessageTaskResult;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.jetbrains.annotations.NotNull;
@@ -39,7 +38,6 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.RejectedExecutionException;
-import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.Pattern;
 
