@@ -10,6 +10,7 @@ import de.telekom.horizon.galaxy.config.GalaxyConfig;
 import de.telekom.horizon.galaxy.kafka.KafkaConsumerHealthIndicator;
 import de.telekom.horizon.galaxy.kafka.PublishedMessageListener;
 import de.telekom.horizon.galaxy.kafka.PublishedMessageTaskFactory;
+import de.telekom.horizon.galaxy.service.BackpressureHandler;
 import io.micrometer.core.instrument.MeterRegistry;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.common.errors.AuthenticationException;
@@ -35,6 +36,14 @@ public class KafkaConsumerConfig {
 
     @Value("${horizon.kafka.fatalExceptionHandlingEnabled:true}")
     private boolean fatalExceptionHandlingEnabled;
+
+    @Bean
+    public PublishedMessageListener publishedMessageListener(PublishedMessageTaskFactory publishedMessageTaskFactory,
+                                                             HorizonTracer horizonTracer,
+                                                             GalaxyConfig galaxyConfig,
+                                                             MeterRegistry meterRegistry) {
+        return new PublishedMessageListener(publishedMessageTaskFactory, horizonTracer, galaxyConfig, meterRegistry);
+    }
 
     /**
      * Creates a custom error handler that marks the application as unhealthy when a fatal exception
@@ -82,22 +91,33 @@ public class KafkaConsumerConfig {
             "hazelcastInstance"
     })
     @Bean
-    public ConcurrentMessageListenerContainer<String, String> concurrentMessageListenerContainer(PublishedMessageTaskFactory publishedMessageTaskFactory,
+    public ConcurrentMessageListenerContainer<String, String> concurrentMessageListenerContainer(PublishedMessageListener listener,
                                                                                                  KafkaProperties props,
                                                                                                  ConsumerFactory<String, String> consumerFactory,
                                                                                                  GalaxyConfig galaxyConfig,
-                                                                                                 HorizonTracer horizonTracer,
-                                                                                                 CommonErrorHandler kafkaErrorHandler,
-                                                                                                 MeterRegistry meterRegistry) {
+                                                                                                 BackpressureHandler backpressureHandler,
+                                                                                                 PublishedMessageTaskFactory publishedMessageTaskFactory,
+                                                                                                 CommonErrorHandler kafkaErrorHandler) {
+        // Register backpressure handler as rejection handler on both executors
+        listener.getTaskExecutor().getThreadPoolExecutor().setRejectedExecutionHandler(backpressureHandler);
+        publishedMessageTaskFactory.getSubscriptionTaskExecutor().getThreadPoolExecutor().setRejectedExecutionHandler(backpressureHandler);
+
+        // Set executor references on handler for resume monitoring
+        backpressureHandler.setBatchExecutor(listener.getTaskExecutor());
+        backpressureHandler.setSubscriptionExecutor(publishedMessageTaskFactory.getSubscriptionTaskExecutor());
+
         var containerProperties = new ContainerProperties(galaxyConfig.getConsumingTopic());
         containerProperties.setAckMode(ContainerProperties.AckMode.MANUAL);
-        containerProperties.setMessageListener(new PublishedMessageListener(publishedMessageTaskFactory, horizonTracer, galaxyConfig, meterRegistry));
+        containerProperties.setMessageListener(listener);
         ConcurrentMessageListenerContainer<String, String> listenerContainer = new ConcurrentMessageListenerContainer<>(consumerFactory, containerProperties);
         listenerContainer.setAutoStartup(false);
         listenerContainer.setConcurrency(props.getPartitionCount());
         // bean name is the prefix of kafka consumer thread name
         listenerContainer.setBeanName("kafka-message-listener");
         listenerContainer.setCommonErrorHandler(kafkaErrorHandler);
+
+        backpressureHandler.setListenerContainer(listenerContainer);
+
         return listenerContainer;
     }
 

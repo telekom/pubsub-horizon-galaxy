@@ -32,6 +32,10 @@ public class GalaxyConfig {
 
     private long nackSleepDurationMs;
 
+    private long backpressureResumeCheckIntervalMs;
+
+    private double backpressureResumeThreshold;
+
     private String defaultEnvironment;
 
     @Value("${horizon.kafka.consumingTopic}")

@@ -11,6 +11,7 @@ import de.telekom.horizon.galaxy.model.PublishedMessageTaskResult;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.binder.jvm.ExecutorServiceMetrics;
+import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.jetbrains.annotations.NotNull;
@@ -39,14 +40,13 @@ import java.util.concurrent.*;
 public class PublishedMessageListener extends AbstractConsumerSeekAware implements BatchAcknowledgingMessageListener<String, String> {
 
     private final PublishedMessageTaskFactory publishedMessageTaskFactory;
+    @Getter
     private final ThreadPoolTaskExecutor taskExecutor;
     private final HorizonTracer tracer;
     private final GalaxyConfig galaxyConfig;
     private final Counter threadPoolSaturatedCounter;
     private final Counter nackCounter;
-    private final Counter nackDueToRejectionCounter;
     private final Counter nackDueToTaskFailureCounter;
-
 
     public PublishedMessageListener(PublishedMessageTaskFactory publishedMessageTaskFactory, HorizonTracer horizonTracer, GalaxyConfig galaxyConfig, MeterRegistry meterRegistry) {
         super();
@@ -61,9 +61,6 @@ public class PublishedMessageListener extends AbstractConsumerSeekAware implemen
         this.nackCounter = Counter.builder("pubsub.kafka.listener.nacks")
                 .description("Total number of batch nacks")
                 .register(meterRegistry);
-        this.nackDueToRejectionCounter = Counter.builder("pubsub.kafka.listener.nacks.rejection")
-                .description("Nacks due to thread pool rejection")
-                .register(meterRegistry);
         this.nackDueToTaskFailureCounter = Counter.builder("pubsub.kafka.listener.nacks.task_failure")
                 .description("Nacks due to task execution failure")
                 .register(meterRegistry);
@@ -75,7 +72,6 @@ public class PublishedMessageListener extends AbstractConsumerSeekAware implemen
         threadPoolTaskExecutor.setCorePoolSize(galaxyConfig.getBatchCoreThreadPoolSize());
         threadPoolTaskExecutor.setMaxPoolSize(galaxyConfig.getBatchMaxThreadPoolSize());
         threadPoolTaskExecutor.setQueueCapacity(galaxyConfig.getBatchQueueCapacity());
-        threadPoolTaskExecutor.setRejectedExecutionHandler(new ThreadPoolExecutor.AbortPolicy());
         threadPoolTaskExecutor.setPrestartAllCoreThreads(true);
         threadPoolTaskExecutor.setThreadGroupName("batch");
         threadPoolTaskExecutor.setThreadNamePrefix("batch-");
@@ -107,7 +103,7 @@ public class PublishedMessageListener extends AbstractConsumerSeekAware implemen
                 Future<PublishedMessageTaskResult> taskFuture = taskExecutor.submit(task);
                 taskFutureList.add(taskFuture);
             } catch (RejectedExecutionException e) {
-                log.warn("Thread pool queue full, applying backpressure. Nacking batch from index {}", i);
+                log.warn("Thread pool queue full, pausing Kafka consumer to apply backpressure at index {}", i);
                 threadPoolSaturatedCounter.increment();
                 rejectedAtIndex = i;
                 break;
@@ -142,9 +138,6 @@ public class PublishedMessageListener extends AbstractConsumerSeekAware implemen
         } else {
             // Track nack metrics
             nackCounter.increment();
-            if (rejectedAtIndex >= 0) {
-                nackDueToRejectionCounter.increment();
-            }
             if (taskFailureIndex >= 0) {
                 nackDueToTaskFailureCounter.increment();
             }
@@ -175,12 +168,6 @@ public class PublishedMessageListener extends AbstractConsumerSeekAware implemen
         }
     }
 
-    /**
-     * Returns a Callable task wrapped with the current trace context obtained from a consumer record.
-     *
-     * @param consumerRecord the consumer record used to create a task
-     * @return a Callable task for processing the received message
-     */
     @SuppressWarnings("unchecked")
     private Callable<PublishedMessageTaskResult> getPublishedMessageTaskResultCallable(ConsumerRecord<String, String> consumerRecord) {
         return (Callable<PublishedMessageTaskResult>) tracer.withCurrentTraceContext(publishedMessageTaskFactory.newTask(consumerRecord));

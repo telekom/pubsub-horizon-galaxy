@@ -25,7 +25,6 @@ import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.stereotype.Component;
 
 import java.util.Collections;
-import java.util.concurrent.ThreadPoolExecutor;
 
 /**
  * Factory for creating tasks associated with a published message.
@@ -76,7 +75,6 @@ public class PublishedMessageTaskFactory {
         threadPoolTaskExecutor.setCorePoolSize(galaxyConfig.getSubscriptionCoreThreadPoolSize());
         threadPoolTaskExecutor.setMaxPoolSize(galaxyConfig.getSubscriptionMaxThreadPoolSize());
         threadPoolTaskExecutor.setQueueCapacity(galaxyConfig.getSubscriptionQueueCapacity());
-        threadPoolTaskExecutor.setRejectedExecutionHandler(new ThreadPoolExecutor.AbortPolicy());
         threadPoolTaskExecutor.setPrestartAllCoreThreads(true);
         threadPoolTaskExecutor.afterPropertiesSet();
         
