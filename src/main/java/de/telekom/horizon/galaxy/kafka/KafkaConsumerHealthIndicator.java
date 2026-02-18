@@ -25,13 +25,16 @@ public class KafkaConsumerHealthIndicator implements HealthIndicator {
 
     /**
      * Marks the Kafka consumer as unhealthy due to a fatal exception.
+     * <p>
+     * Note: errorTimestamp and errorMessage are set BEFORE healthy flag to prevent
+     * race conditions where health() could see healthy=false but null timestamp/message.
      *
      * @param reason Description of the failure reason
      */
     public void markUnhealthy(String reason) {
-        healthy.set(false);
-        errorMessage.set(reason);
         errorTimestamp.set(Instant.now());
+        errorMessage.set(reason);
+        healthy.set(false);
     }
 
     @Override
@@ -39,9 +42,19 @@ public class KafkaConsumerHealthIndicator implements HealthIndicator {
         if (healthy.get()) {
             return Health.up().build();
         }
-        return Health.down()
-                .withDetail("error", errorMessage.get())
-                .withDetail("since", errorTimestamp.get().toString())
-                .build();
+
+        Health.Builder builder = Health.down();
+
+        String error = errorMessage.get();
+        if (error != null) {
+            builder.withDetail("error", error);
+        }
+
+        Instant timestamp = errorTimestamp.get();
+        if (timestamp != null) {
+            builder.withDetail("since", timestamp.toString());
+        }
+
+        return builder.build();
     }
 }
