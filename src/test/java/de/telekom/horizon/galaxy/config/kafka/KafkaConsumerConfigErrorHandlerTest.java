@@ -20,7 +20,6 @@ import org.springframework.kafka.listener.CommonErrorHandler;
 import org.springframework.kafka.listener.MessageListenerContainer;
 
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.Mockito.*;
 
 /**
@@ -50,15 +49,14 @@ class KafkaConsumerConfigErrorHandlerTest {
     @Test
     void shouldMarkUnhealthyOnWrappedInterruptException() {
         // Given: A Kafka InterruptException wrapped in RuntimeException
-        // The error handler checks the cause chain, so it should find InterruptException
         InterruptException interruptException = new InterruptException(new InterruptedException("Test interrupt"));
         RuntimeException wrappedException = new RuntimeException("Wrapper exception", interruptException);
 
         // When: handleOtherException is called
         errorHandler.handleOtherException(wrappedException, consumer, container, false);
 
-        // Then: Health indicator should be marked unhealthy (outer exception class is used in message)
-        verify(healthIndicator).markUnhealthy(contains("RuntimeException"));
+        // Then: Health indicator should be marked unhealthy
+        verify(healthIndicator).markUnhealthy("Fatal Kafka consumer exception occurred");
     }
 
     @Test
@@ -70,7 +68,7 @@ class KafkaConsumerConfigErrorHandlerTest {
         errorHandler.handleOtherException(interruptException, consumer, container, false);
 
         // Then: Health indicator should be marked unhealthy
-        verify(healthIndicator).markUnhealthy(contains("InterruptException"));
+        verify(healthIndicator).markUnhealthy("Fatal Kafka consumer exception occurred");
     }
 
     @Test
@@ -82,7 +80,7 @@ class KafkaConsumerConfigErrorHandlerTest {
         errorHandler.handleOtherException(wrappedException, consumer, container, false);
 
         // Then: Health indicator should be marked unhealthy
-        verify(healthIndicator).markUnhealthy(contains("RuntimeException"));
+        verify(healthIndicator).markUnhealthy("Fatal Kafka consumer exception occurred");
     }
 
     @Test
@@ -94,7 +92,7 @@ class KafkaConsumerConfigErrorHandlerTest {
         errorHandler.handleOtherException(authException, consumer, container, false);
 
         // Then: Health indicator should be marked unhealthy
-        verify(healthIndicator).markUnhealthy(contains("AuthenticationException"));
+        verify(healthIndicator).markUnhealthy("Fatal Kafka consumer exception occurred");
     }
 
     @Test
@@ -106,7 +104,7 @@ class KafkaConsumerConfigErrorHandlerTest {
         errorHandler.handleOtherException(authzException, consumer, container, false);
 
         // Then: Health indicator should be marked unhealthy
-        verify(healthIndicator).markUnhealthy(contains("AuthorizationException"));
+        verify(healthIndicator).markUnhealthy("Fatal Kafka consumer exception occurred");
     }
 
     @Test
@@ -118,7 +116,7 @@ class KafkaConsumerConfigErrorHandlerTest {
         errorHandler.handleOtherException(fencedException, consumer, container, false);
 
         // Then: Health indicator should be marked unhealthy
-        verify(healthIndicator).markUnhealthy(contains("FencedInstanceIdException"));
+        verify(healthIndicator).markUnhealthy("Fatal Kafka consumer exception occurred");
     }
 
     @Test
