@@ -22,6 +22,8 @@ import org.springframework.kafka.listener.MessageListenerContainer;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
+import java.lang.reflect.Field;
+
 /**
  * Unit tests for the Kafka error handler in KafkaConsumerConfig.
  * Tests the behavior when fatal exceptions occur during Kafka poll().
@@ -41,8 +43,12 @@ class KafkaConsumerConfigErrorHandlerTest {
     private CommonErrorHandler errorHandler;
 
     @BeforeEach
-    void setUp() {
+    void setUp() throws Exception {
         KafkaConsumerConfig kafkaConsumerConfig = new KafkaConsumerConfig();
+        Field field = KafkaConsumerConfig.class.getDeclaredField("fatalExceptionHandlingEnabled");
+        field.setAccessible(true);
+        field.setBoolean(kafkaConsumerConfig, true);
+
         errorHandler = kafkaConsumerConfig.kafkaErrorHandler(healthIndicator);
     }
 
@@ -133,6 +139,30 @@ class KafkaConsumerConfigErrorHandlerTest {
         }
 
         // Then: Health indicator should NOT be marked unhealthy
+        verify(healthIndicator, never()).markUnhealthy(any());
+    }
+
+    @Test
+    void shouldNotMarkUnhealthyWhenFeatureDisabled() throws Exception {
+        // Given: Fatal exception handling is disabled via config
+        KafkaConsumerConfig disabledConfig = new KafkaConsumerConfig();
+        Field field = KafkaConsumerConfig.class.getDeclaredField("fatalExceptionHandlingEnabled");
+        field.setAccessible(true);
+        field.setBoolean(disabledConfig, false);
+
+        CommonErrorHandler disabledErrorHandler = disabledConfig.kafkaErrorHandler(healthIndicator);
+
+        // And: A fatal exception occurs
+        InterruptException interruptException = new InterruptException("Test interrupt");
+
+        // When: handleOtherException is called
+        try {
+            disabledErrorHandler.handleOtherException(interruptException, consumer, container, false);
+        } catch (Exception e) {
+            // Expected - default handler may throw
+        }
+
+        // Then: Health indicator should NOT be marked unhealthy (feature disabled)
         verify(healthIndicator, never()).markUnhealthy(any());
     }
 }

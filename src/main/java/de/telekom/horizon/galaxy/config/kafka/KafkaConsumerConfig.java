@@ -17,6 +17,7 @@ import org.apache.kafka.common.errors.FencedInstanceIdException;
 import org.apache.kafka.common.errors.InterruptException;
 import org.jetbrains.annotations.NotNull;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.DependsOn;
@@ -31,10 +32,16 @@ import org.springframework.kafka.listener.MessageListenerContainer;
 @Slf4j
 public class KafkaConsumerConfig {
 
+    @Value("${horizon.kafka.fatalExceptionHandlingEnabled:true}")
+    private boolean fatalExceptionHandlingEnabled;
+
     /**
      * Creates a custom error handler that marks the application as unhealthy when a fatal exception
      * occurs during Kafka poll(). This allows Kubernetes to detect the unhealthy state via the
      * health endpoint and restart the pod.
+     *
+     * <p>This behavior can be disabled via configuration:</p>
+     * <pre>horizon.kafka.fatalExceptionHandlingEnabled: false</pre>
      *
      * <p>Fatal exceptions include:</p>
      * <ul>
@@ -55,7 +62,7 @@ public class KafkaConsumerConfig {
             @Override
             public void handleOtherException(@NotNull Exception exception, @NotNull org.apache.kafka.clients.consumer.Consumer<?, ?> consumer,
                                              @NotNull MessageListenerContainer container, boolean batchListener) {
-                if (isFatalException(exception)) {
+                if (fatalExceptionHandlingEnabled && isFatalException(exception)) {
                     log.error("Fatal Kafka consumer exception occurred. Marking health as DOWN.", exception);
                     healthIndicator.markUnhealthy("Fatal Kafka consumer exception occurred");
                 } else {
