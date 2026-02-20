@@ -44,7 +44,6 @@ public class PublishedMessageListener extends AbstractConsumerSeekAware implemen
     private final ThreadPoolTaskExecutor taskExecutor;
     private final HorizonTracer tracer;
     private final GalaxyConfig galaxyConfig;
-    private final Counter threadPoolSaturatedCounter;
     private final Counter nackCounter;
     private final Counter nackDueToTaskFailureCounter;
 
@@ -55,9 +54,6 @@ public class PublishedMessageListener extends AbstractConsumerSeekAware implemen
         this.galaxyConfig = galaxyConfig;
 
         this.taskExecutor = initThreadPoolTaskExecutor(galaxyConfig, meterRegistry);
-        this.threadPoolSaturatedCounter = Counter.builder("pubsub.batch.threadpool.saturated")
-                .description("Number of times the batch thread pool rejected tasks due to queue saturation")
-                .register(meterRegistry);
         this.nackCounter = Counter.builder("pubsub.kafka.listener.nacks")
                 .description("Total number of batch nacks")
                 .register(meterRegistry);
@@ -104,7 +100,6 @@ public class PublishedMessageListener extends AbstractConsumerSeekAware implemen
                 taskFutureList.add(taskFuture);
             } catch (RejectedExecutionException e) {
                 log.warn("Thread pool queue full, pausing Kafka consumer to apply backpressure at index {}", i);
-                threadPoolSaturatedCounter.increment();
                 rejectedAtIndex = i;
                 break;
             }

@@ -14,7 +14,6 @@ import de.telekom.eni.pandora.horizon.tracing.HorizonTracer;
 import de.telekom.horizon.galaxy.cache.PayloadSizeHistogramCache;
 import de.telekom.horizon.galaxy.cache.SubscriberCache;
 import de.telekom.horizon.galaxy.config.GalaxyConfig;
-import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.binder.jvm.ExecutorServiceMetrics;
 import lombok.Getter;
@@ -47,7 +46,6 @@ public class PublishedMessageTaskFactory {
     private final ObjectMapper objectMapper;
     private final MeterRegistry meterRegistry;
     private final ThreadPoolTaskExecutor subscriptionTaskExecutor;
-    private final Counter subscriptionThreadPoolSaturatedCounter;
 
     @Autowired
     public PublishedMessageTaskFactory(HorizonTracer tracer, EventWriter eventWriter, HorizonMetricsHelper metricsHelper, SubscriberCache subscriptionCache, DeDuplicationService deDuplicationService, KafkaProperties kafkaProperties, @Qualifier("incomingPayloadSizeCache") PayloadSizeHistogramCache incomingPayloadSizeCache, @Qualifier("outgoingPayloadSizeCache") PayloadSizeHistogramCache outgoingPayloadSizeHistogramCache, GalaxyConfig galaxyConfig, ObjectMapper objectMapper, MeterRegistry meterRegistry) {
@@ -63,9 +61,6 @@ public class PublishedMessageTaskFactory {
         this.objectMapper = objectMapper;
         this.meterRegistry = meterRegistry;
         this.subscriptionTaskExecutor = initSubscriptionThreadPoolTaskExecutor();
-        this.subscriptionThreadPoolSaturatedCounter = Counter.builder("pubsub.subscription.threadpool.saturated")
-                .description("Number of times the subscription thread pool rejected tasks due to queue saturation")
-                .register(meterRegistry);
     }
 
     private ThreadPoolTaskExecutor initSubscriptionThreadPoolTaskExecutor() {
@@ -87,9 +82,5 @@ public class PublishedMessageTaskFactory {
 
     public PublishedMessageTask newTask(ConsumerRecord<String, String> consumerRecord) {
         return new PublishedMessageTask(consumerRecord, this);
-    }
-
-    public void incrementSubscriptionThreadPoolSaturatedCounter() {
-        subscriptionThreadPoolSaturatedCounter.increment();
     }
 }

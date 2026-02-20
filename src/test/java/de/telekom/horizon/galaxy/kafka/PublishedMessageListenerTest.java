@@ -98,7 +98,6 @@ class PublishedMessageListenerTest {
 
         verify(acknowledgment, never()).acknowledge();
         verify(acknowledgment).nack(anyInt(), any(Duration.class));
-        assertTrue(meterRegistry.get("pubsub.batch.threadpool.saturated").counter().count() > 0);
     }
 
     @Test

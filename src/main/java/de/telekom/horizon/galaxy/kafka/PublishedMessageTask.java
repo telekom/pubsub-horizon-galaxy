@@ -63,13 +63,11 @@ public class PublishedMessageTask implements Callable<PublishedMessageTaskResult
     private final PayloadSizeHistogramCache incomingPayloadSizeCache;
     private final PayloadSizeHistogramCache outgoingPayloadSizeHistogramCache;
     private final GalaxyConfig galaxyConfig;
-    private final PublishedMessageTaskFactory factory;
 
     private final ThreadPoolTaskExecutor taskExecutor;
 
     public PublishedMessageTask(ConsumerRecord<String, String> consumerRecord, PublishedMessageTaskFactory factory) {
         this.consumerRecord = consumerRecord;
-        this.factory = factory;
 
         this.tracer = factory.getTracer();
         this.eventWriter = factory.getEventWriter();
@@ -217,7 +215,6 @@ public class PublishedMessageTask implements Callable<PublishedMessageTaskResult
         }), taskExecutor);
         } catch (RejectedExecutionException e) {
             log.warn("Subscription thread pool queue full for subscription {}", subscriptionEventMessage.getSubscriptionId());
-            factory.incrementSubscriptionThreadPoolSaturatedCounter();
             // Return a failed future to maintain error handling flow
             CompletableFuture<Void> failedFuture = new CompletableFuture<>();
             failedFuture.completeExceptionally(e);
