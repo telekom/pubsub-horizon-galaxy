@@ -27,6 +27,7 @@ horizon:
     lingerMs: ${GALAXY_KAFKA_LINGER_MS:0}
     acks: ${GALAXY_KAFKA_ACKS:1}
     maxRequestSize: ${GALAXY_KAFKA_MAXREQUESTSIZE:1101004}
+    fatalExceptionHandlingEnabled: ${GALAXY_KAFKA_FATAL_EXCEPTION_HANDLING_ENABLED:true}
     compression:
       enabled: ${GALAXY_KAFKA_COMPRESSION_ENABLED:false}
       type: ${GALAXY_KAFKA_COMPRESSION_TYPE:none}
