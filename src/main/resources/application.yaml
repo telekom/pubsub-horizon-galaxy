@@ -77,8 +77,6 @@ management:
   endpoint:
     health:
       show-details: always
-    shutdown:
-      enabled: true
   health:
     hazelcast:
       enabled: false
