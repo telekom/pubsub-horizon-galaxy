@@ -24,7 +24,6 @@ import de.telekom.horizon.galaxy.cache.PayloadSizeHistogramCache;
 import de.telekom.horizon.galaxy.cache.SubscriberCache;
 import de.telekom.horizon.galaxy.config.GalaxyConfig;
 import de.telekom.horizon.galaxy.model.EvaluationResultStatus;
-import de.telekom.horizon.galaxy.model.PublishedMessageTaskResult;
 import de.telekom.horizon.galaxy.filters.FilterEventMessageWrapper;
 import de.telekom.horizon.galaxy.filters.Filters;
 import lombok.extern.slf4j.Slf4j;
@@ -36,7 +35,6 @@ import org.springframework.kafka.support.SendResult;
 import java.util.*;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutionException;
 import java.util.regex.Pattern;
 
 import static de.telekom.eni.pandora.horizon.metrics.HorizonMetricsConstants.METRIC_MULTIPLEXED_EVENTS;
