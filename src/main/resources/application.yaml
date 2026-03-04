@@ -56,7 +56,7 @@ galaxy:
   subscription-max-threadpool-size: ${GALAXY_SUBSCRIPTION_MAX_THREADPOOL_SIZE:50}
   subscription-queue-capacity: ${GALAXY_SUBSCRIPTION_QUEUE_CAPACITY:15000}
   nack-sleep-duration-ms: ${GALAXY_NACK_SLEEP_DURATION_MS:5000}
-  backpressure-resume-check-interval-ms: ${GALAXY_BACKPRESSURE_RESUME_CHECK_INTERVAL_MS:1000}
+  backpressure-resume-check-interval-ms: 5000
   backpressure-resume-threshold: ${GALAXY_BACKPRESSURE_RESUME_THRESHOLD:0.5}
   default-environment: ${GALAXY_DEFAULT_ENVIRONMENT:default}
   feature-jsonpath-filtering-enabled: ${GALAXY_FEATURE_JSONPATH_FILTERING_ENABLED:false}

@@ -104,7 +104,7 @@ public class BackpressureHandler implements RejectedExecutionHandler {
      * Periodically checks whether both thread pools have recovered enough capacity
      * and resumes the Kafka listener container if it was previously paused.
      */
-    @Scheduled(fixedDelayString = "${galaxy.backpressure-resume-check-interval-ms:1000}")
+    @Scheduled(fixedDelayString = "${galaxy.backpressure-resume-check-interval-ms}")
     public void checkAndResume() {
         if (!isPaused()) {
             return;
