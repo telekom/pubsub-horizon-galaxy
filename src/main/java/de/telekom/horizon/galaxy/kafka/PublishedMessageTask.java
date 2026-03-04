@@ -35,7 +35,6 @@ import org.springframework.kafka.support.SendResult;
 
 import java.util.*;
 import java.util.concurrent.Callable;
-import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.regex.Pattern;
@@ -206,11 +205,7 @@ public class PublishedMessageTask implements Callable<PublishedMessageTaskResult
             return result;
         };
 
-        return wrapIntoTracerContext(sendMessage);
-    }
-
-    private CompletableFuture<SendResult<String, String>> wrapIntoTracerContext(Callable<CompletableFuture<SendResult<String, String>>> callable) throws Exception {
-        return (CompletableFuture<SendResult<String, String>>) tracer.withCurrentTraceContext(callable).call();
+        return tracer.withCurrentContext(sendMessage).call();
     }
 
     /**

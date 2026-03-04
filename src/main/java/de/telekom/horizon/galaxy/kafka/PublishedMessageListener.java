@@ -74,9 +74,8 @@ public class PublishedMessageListener extends AbstractConsumerSeekAware implemen
      * @param consumerRecord the consumer record used to create a task
      * @return a Callable task for processing the received message
      */
-    @SuppressWarnings("unchecked")
     private Callable<PublishedMessageTaskResult> newPublishedMessageTaskWithTrace(ConsumerRecord<String, String> consumerRecord) {
-        return (Callable<PublishedMessageTaskResult>) tracer.withCurrentTraceContext(publishedMessageTaskFactory.newTask(consumerRecord));
+        return tracer.withCurrentContext(publishedMessageTaskFactory.newTask(consumerRecord));
     }
 
 }
