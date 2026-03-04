@@ -216,9 +216,7 @@ public class PublishedMessageTask implements Callable<PublishedMessageTaskResult
         } catch (RejectedExecutionException e) {
             log.warn("Subscription thread pool queue full for subscription {}", subscriptionEventMessage.getSubscriptionId());
             // Return a failed future to maintain error handling flow
-            CompletableFuture<Void> failedFuture = new CompletableFuture<>();
-            failedFuture.completeExceptionally(e);
-            return failedFuture;
+            return CompletableFuture.failedFuture(e);
         }
     }
 

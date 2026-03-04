@@ -5,10 +5,11 @@
 package de.telekom.horizon.galaxy.service;
 
 import de.telekom.horizon.galaxy.config.GalaxyConfig;
+import de.telekom.horizon.galaxy.kafka.PublishedMessageListener;
+import de.telekom.horizon.galaxy.kafka.PublishedMessageTaskFactory;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
-import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.kafka.listener.ConcurrentMessageListenerContainer;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -29,9 +30,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * <p>
  * Periodically checks whether both the batch and subscription thread pools have recovered
  * enough capacity and resumes the Kafka listener container if it was previously paused.
- * <p>
- * The container reference is set after construction via {@link #setListenerContainer} from the
- * {@link de.telekom.horizon.galaxy.config.kafka.KafkaConsumerConfig}.
  */
 @Component
 @Slf4j
@@ -41,17 +39,21 @@ public class BackpressureHandler implements RejectedExecutionHandler {
     private final Counter pauseCounter;
     private final GalaxyConfig galaxyConfig;
 
-    @Setter
-    private volatile ConcurrentMessageListenerContainer<String, String> listenerContainer;
+    private final ConcurrentMessageListenerContainer<String, String> listenerContainer;
+    private final ThreadPoolTaskExecutor batchExecutor;
+    private final ThreadPoolTaskExecutor subscriptionExecutor;
 
-    @Setter
-    private volatile ThreadPoolTaskExecutor batchExecutor;
-
-    @Setter
-    private volatile ThreadPoolTaskExecutor subscriptionExecutor;
-
-    public BackpressureHandler(MeterRegistry meterRegistry, GalaxyConfig galaxyConfig) {
+    public BackpressureHandler(MeterRegistry meterRegistry, GalaxyConfig galaxyConfig, ConcurrentMessageListenerContainer<String, String> listenerContainer,
+                               PublishedMessageTaskFactory publishedMessageTaskFactory, PublishedMessageListener publishedMessageListener) {
         this.galaxyConfig = galaxyConfig;
+
+        this.listenerContainer = listenerContainer;
+        this.batchExecutor = publishedMessageListener.getTaskExecutor();
+        this.subscriptionExecutor = publishedMessageTaskFactory.getSubscriptionTaskExecutor();
+
+        publishedMessageListener.getTaskExecutor().getThreadPoolExecutor().setRejectedExecutionHandler(this);
+        publishedMessageTaskFactory.getSubscriptionTaskExecutor().getThreadPoolExecutor().setRejectedExecutionHandler(this);
+
         this.pauseCounter = Counter.builder("pubsub.kafka.listener.pause.triggered")
                 .description("Number of times the Kafka listener was paused due to backpressure")
                 .register(meterRegistry);
@@ -71,12 +73,12 @@ public class BackpressureHandler implements RejectedExecutionHandler {
         throw new RejectedExecutionException("Task " + r.toString() + " rejected from " + executor.toString());
     }
 
-  /**
+    /**
      * Pauses the Kafka listener container to stop consuming new records.
      * Safe to call from any thread; only the first call while unpaused takes effect.
      */
     public void pause() {
-        if (listenerContainer != null && !paused.getAndSet(true)) {
+        if (!paused.getAndSet(true)) {
             listenerContainer.pause();
             pauseCounter.increment();
             log.info("Kafka listener container paused due to thread pool saturation.");
@@ -88,7 +90,7 @@ public class BackpressureHandler implements RejectedExecutionHandler {
      * Safe to call from any thread; only the first call while paused takes effect.
      */
     public void resume() {
-        if (listenerContainer != null && paused.getAndSet(false)) {
+        if (paused.getAndSet(false)) {
             listenerContainer.resume();
             log.info("Kafka listener container resumed after thread pool capacity recovered.");
         }
@@ -123,9 +125,6 @@ public class BackpressureHandler implements RejectedExecutionHandler {
     }
 
     private double getQueueUsageRatio(ThreadPoolTaskExecutor executor) {
-        if (executor == null) {
-            return 0.0;
-        }
         var queue = executor.getThreadPoolExecutor().getQueue();
         int totalCapacity = queue.size() + queue.remainingCapacity();
         return totalCapacity > 0 ? (double) queue.size() / totalCapacity : 0.0;

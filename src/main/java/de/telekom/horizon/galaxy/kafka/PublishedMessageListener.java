@@ -24,7 +24,10 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
-import java.util.concurrent.*;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Future;
+import java.util.concurrent.RejectedExecutionException;
 
 /**
  * The {@code PublishedMessageListener} class is responsible for processing Kafka messages in batches.
@@ -72,11 +75,11 @@ public class PublishedMessageListener extends AbstractConsumerSeekAware implemen
         threadPoolTaskExecutor.setThreadGroupName("batch");
         threadPoolTaskExecutor.setThreadNamePrefix("batch-");
         threadPoolTaskExecutor.afterPropertiesSet();
-        
+
         // Register metrics for the thread pool
-        ExecutorServiceMetrics.monitor(meterRegistry, threadPoolTaskExecutor.getThreadPoolExecutor(), 
-            "batchTaskExecutor", Collections.emptyList());
-        
+        ExecutorServiceMetrics.monitor(meterRegistry, threadPoolTaskExecutor.getThreadPoolExecutor(),
+                "batchTaskExecutor", Collections.emptyList());
+
         return threadPoolTaskExecutor;
     }
 
@@ -151,16 +154,9 @@ public class PublishedMessageListener extends AbstractConsumerSeekAware implemen
      * @return The minimum valid index, or -1 if both are -1 (success)
      */
     private int determineNackIndex(int rejectedAtIndex, int taskFailureIndex) {
-        if (rejectedAtIndex >= 0 && taskFailureIndex >= 0) {
-            // Both failures occurred - use the earlier one
-            return Math.min(rejectedAtIndex, taskFailureIndex);
-        } else if (rejectedAtIndex >= 0) {
-            // Only rejection occurred
-            return rejectedAtIndex;
-        } else {
-            // Only task failure occurred (or no failure at all)
-            return taskFailureIndex;
-        }
+        if (rejectedAtIndex < 0) return taskFailureIndex;
+        if (taskFailureIndex < 0) return rejectedAtIndex;
+        return Math.min(rejectedAtIndex, taskFailureIndex);
     }
 
     @SuppressWarnings("unchecked")

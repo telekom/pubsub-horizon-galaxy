@@ -5,10 +5,14 @@
 package de.telekom.horizon.galaxy.service;
 
 import de.telekom.horizon.galaxy.config.GalaxyConfig;
+import de.telekom.horizon.galaxy.kafka.PublishedMessageListener;
+import de.telekom.horizon.galaxy.kafka.PublishedMessageTaskFactory;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.springframework.kafka.listener.ConcurrentMessageListenerContainer;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 
@@ -23,21 +27,30 @@ class BackpressureHandlerTest {
     private MeterRegistry meterRegistry;
     private BackpressureHandler handler;
 
+    GalaxyConfig galaxyConfig = new GalaxyConfig();
+
     @SuppressWarnings("unchecked")
     private final ConcurrentMessageListenerContainer<String, String> container = mock(ConcurrentMessageListenerContainer.class);
+
+    private final PublishedMessageTaskFactory publishedMessageTaskFactory = mock(PublishedMessageTaskFactory.class);
+    private final PublishedMessageListener publishedMessageListener = mock(PublishedMessageListener.class);
+
+    private final ThreadPoolTaskExecutor batchExecutor = createExecutorWithQueueUsage(0.3);
+    private final ThreadPoolTaskExecutor subscriptionExecutor = createExecutorWithQueueUsage(0.7);
 
     @BeforeEach
     void setUp() {
         meterRegistry = new SimpleMeterRegistry();
-        var galaxyConfig = new GalaxyConfig();
         galaxyConfig.setBackpressureResumeThreshold(0.5);
-        handler = new BackpressureHandler(meterRegistry, galaxyConfig);
+
+        when(publishedMessageListener.getTaskExecutor()).thenReturn(batchExecutor);
+        when(publishedMessageTaskFactory.getSubscriptionTaskExecutor()).thenReturn(subscriptionExecutor);
+
+        handler = new BackpressureHandler(meterRegistry, galaxyConfig, container, publishedMessageTaskFactory, publishedMessageListener);
     }
 
     @Test
     void pauseShouldPauseContainerAndSetState() {
-        handler.setListenerContainer(container);
-
         handler.pause();
 
         assertTrue(handler.isPaused());
@@ -48,8 +61,6 @@ class BackpressureHandlerTest {
 
     @Test
     void pauseCalledTwiceShouldOnlyPauseOnce() {
-        handler.setListenerContainer(container);
-
         handler.pause();
         handler.pause();
 
@@ -59,7 +70,6 @@ class BackpressureHandlerTest {
 
     @Test
     void resumeShouldResumeContainerAndClearState() {
-        handler.setListenerContainer(container);
         handler.pause();
 
         handler.resume();
@@ -71,7 +81,6 @@ class BackpressureHandlerTest {
 
     @Test
     void resumeCalledTwiceShouldOnlyResumeOnce() {
-        handler.setListenerContainer(container);
         handler.pause();
 
         handler.resume();
@@ -82,19 +91,10 @@ class BackpressureHandlerTest {
 
     @Test
     void resumeWithoutPauseShouldDoNothing() {
-        handler.setListenerContainer(container);
-
         handler.resume();
 
         assertFalse(handler.isPaused());
         verify(container, never()).resume();
-    }
-
-    @Test
-    void pauseWithoutContainerShouldNotThrow() {
-        // No container set
-        assertDoesNotThrow(() -> handler.pause());
-        assertFalse(handler.isPaused());
     }
 
     @Test
@@ -111,8 +111,6 @@ class BackpressureHandlerTest {
 
     @Test
     void gaugeReflectsPausedState() {
-        handler.setListenerContainer(container);
-
         assertEquals(0.0, meterRegistry.get("pubsub.kafka.listener.paused").gauge().value());
 
         handler.pause();
@@ -124,7 +122,6 @@ class BackpressureHandlerTest {
 
     @Test
     void rejectedExecutionShouldPauseAndThrow() {
-        handler.setListenerContainer(container);
         var runnable = mock(Runnable.class);
         var executor = mock(ThreadPoolExecutor.class);
 
@@ -135,88 +132,38 @@ class BackpressureHandlerTest {
 
     @Test
     void checkAndResumeShouldSkipWhenNotPaused() {
-        handler.setListenerContainer(container);
-
         handler.checkAndResume();
 
         verify(container, never()).resume();
     }
 
-    @Test
-    void checkAndResumeShouldResumeWhenBothPoolsBelowThreshold() {
-        handler.setListenerContainer(container);
-        handler.pause();
+    @ParameterizedTest(name = "{0}")
+    @CsvSource({
+            "Resume when both pools below threshold, 0.3, 0.2, true",   // Both below threshold
+            "Do not resume when batch-pool above threshold, 0.8, 0.2, false",  // Batch above threshold
+            "Do not resume when subscription-pool above threshold, 0.3, 0.7, false",  // Subscription above threshold
+            "Resume when both pools exactly at threshold, 0.5, 0.5, true"    // Both exactly at threshold
+    })
+    void checkAndResumeShouldHandleThresholds(String displayName, double batchUsage, double subscriptionUsage, boolean shouldResume) {
+        var newBatchExecutor = createExecutorWithQueueUsage(batchUsage);
+        var newSubscriptionExecutor = createExecutorWithQueueUsage(subscriptionUsage);
 
-        var batchExecutor = createExecutorWithQueueUsage(0.3);
-        var subscriptionExecutor = createExecutorWithQueueUsage(0.2);
-        handler.setBatchExecutor(batchExecutor);
-        handler.setSubscriptionExecutor(subscriptionExecutor);
+        when(publishedMessageListener.getTaskExecutor()).thenReturn(newBatchExecutor);
+        when(publishedMessageTaskFactory.getSubscriptionTaskExecutor()).thenReturn(newSubscriptionExecutor);
+
+        handler = new BackpressureHandler(meterRegistry, galaxyConfig, container, publishedMessageTaskFactory, publishedMessageListener);
+
+        handler.pause();
 
         handler.checkAndResume();
 
-        assertFalse(handler.isPaused());
-        verify(container).resume();
-    }
-
-    @Test
-    void checkAndResumeShouldNotResumeWhenBatchPoolAboveThreshold() {
-        handler.setListenerContainer(container);
-        handler.pause();
-
-        var batchExecutor = createExecutorWithQueueUsage(0.8);
-        var subscriptionExecutor = createExecutorWithQueueUsage(0.2);
-        handler.setBatchExecutor(batchExecutor);
-        handler.setSubscriptionExecutor(subscriptionExecutor);
-
-        handler.checkAndResume();
-
-        assertTrue(handler.isPaused());
-        verify(container, never()).resume();
-    }
-
-    @Test
-    void checkAndResumeShouldNotResumeWhenSubscriptionPoolAboveThreshold() {
-        handler.setListenerContainer(container);
-        handler.pause();
-
-        var batchExecutor = createExecutorWithQueueUsage(0.3);
-        var subscriptionExecutor = createExecutorWithQueueUsage(0.7);
-        handler.setBatchExecutor(batchExecutor);
-        handler.setSubscriptionExecutor(subscriptionExecutor);
-
-        handler.checkAndResume();
-
-        assertTrue(handler.isPaused());
-        verify(container, never()).resume();
-    }
-
-    @Test
-    void checkAndResumeShouldResumeWhenBothPoolsExactlyAtThreshold() {
-        handler.setListenerContainer(container);
-        handler.pause();
-
-        var batchExecutor = createExecutorWithQueueUsage(0.5);
-        var subscriptionExecutor = createExecutorWithQueueUsage(0.5);
-        handler.setBatchExecutor(batchExecutor);
-        handler.setSubscriptionExecutor(subscriptionExecutor);
-
-        handler.checkAndResume();
-
-        assertFalse(handler.isPaused());
-        verify(container).resume();
-    }
-
-    @Test
-    void checkAndResumeShouldHandleNullExecutors() {
-        handler.setListenerContainer(container);
-        handler.pause();
-        // Don't set any executors — they remain null
-
-        handler.checkAndResume();
-
-        // Null executors return 0.0 usage, which is below threshold → resume
-        assertFalse(handler.isPaused());
-        verify(container).resume();
+        if (shouldResume) {
+            assertFalse(handler.isPaused());
+            verify(container).resume();
+        } else {
+            assertTrue(handler.isPaused());
+            verify(container, never()).resume();
+        }
     }
 
     private ThreadPoolTaskExecutor createExecutorWithQueueUsage(double ratio) {
@@ -233,7 +180,10 @@ class BackpressureHandlerTest {
         // Fill queue to desired ratio
         for (int i = 0; i < queuedItems; i++) {
             executor.getThreadPoolExecutor().getQueue().add(() -> {
-                try { Thread.sleep(60000); } catch (InterruptedException ignored) {}
+                try {
+                    Thread.sleep(60000);
+                } catch (InterruptedException ignored) {
+                }
             });
         }
 

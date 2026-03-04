@@ -10,7 +10,6 @@ import de.telekom.horizon.galaxy.config.GalaxyConfig;
 import de.telekom.horizon.galaxy.kafka.KafkaConsumerHealthIndicator;
 import de.telekom.horizon.galaxy.kafka.PublishedMessageListener;
 import de.telekom.horizon.galaxy.kafka.PublishedMessageTaskFactory;
-import de.telekom.horizon.galaxy.service.BackpressureHandler;
 import io.micrometer.core.instrument.MeterRegistry;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.common.errors.AuthenticationException;
@@ -95,17 +94,7 @@ public class KafkaConsumerConfig {
                                                                                                  KafkaProperties props,
                                                                                                  ConsumerFactory<String, String> consumerFactory,
                                                                                                  GalaxyConfig galaxyConfig,
-                                                                                                 BackpressureHandler backpressureHandler,
-                                                                                                 PublishedMessageTaskFactory publishedMessageTaskFactory,
                                                                                                  CommonErrorHandler kafkaErrorHandler) {
-        // Register backpressure handler as rejection handler on both executors
-        listener.getTaskExecutor().getThreadPoolExecutor().setRejectedExecutionHandler(backpressureHandler);
-        publishedMessageTaskFactory.getSubscriptionTaskExecutor().getThreadPoolExecutor().setRejectedExecutionHandler(backpressureHandler);
-
-        // Set executor references on handler for resume monitoring
-        backpressureHandler.setBatchExecutor(listener.getTaskExecutor());
-        backpressureHandler.setSubscriptionExecutor(publishedMessageTaskFactory.getSubscriptionTaskExecutor());
-
         var containerProperties = new ContainerProperties(galaxyConfig.getConsumingTopic());
         containerProperties.setAckMode(ContainerProperties.AckMode.MANUAL);
         containerProperties.setMessageListener(listener);
@@ -115,8 +104,6 @@ public class KafkaConsumerConfig {
         // bean name is the prefix of kafka consumer thread name
         listenerContainer.setBeanName("kafka-message-listener");
         listenerContainer.setCommonErrorHandler(kafkaErrorHandler);
-
-        backpressureHandler.setListenerContainer(listenerContainer);
 
         return listenerContainer;
     }
@@ -132,10 +119,10 @@ public class KafkaConsumerConfig {
             return false;
         }
         if (exception instanceof InterruptedException ||
-            exception instanceof InterruptException ||
-            exception instanceof AuthenticationException ||
-            exception instanceof AuthorizationException ||
-            exception instanceof FencedInstanceIdException) {
+                exception instanceof InterruptException ||
+                exception instanceof AuthenticationException ||
+                exception instanceof AuthorizationException ||
+                exception instanceof FencedInstanceIdException) {
             return true;
         }
         return isFatalException(exception.getCause());
