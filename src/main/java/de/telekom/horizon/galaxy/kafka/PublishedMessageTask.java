@@ -48,7 +48,7 @@ import static de.telekom.eni.pandora.horizon.metrics.HorizonMetricsConstants.MET
  * creating {@link SubscriptionEventMessage} for all recipients, and sending them to Kafka.
  */
 @Slf4j
-public class PublishedMessageTask implements Callable<PublishedMessageTaskResult> {
+public class PublishedMessageTask implements Callable<CompletableFuture<Void>> {
 
     private final ObjectMapper objectMapper;
     private final ConsumerRecord<String, String> consumerRecord;
@@ -77,7 +77,7 @@ public class PublishedMessageTask implements Callable<PublishedMessageTaskResult
     }
 
     @Override
-    public PublishedMessageTaskResult call() {
+    public CompletableFuture<Void> call() {
         //Start main span for published-message-task
         var span = tracer.startSpanFromKafkaHeaders("consume published message", consumerRecord.headers());
         try (var ignored = tracer.withSpanInScope(span)) {
@@ -86,7 +86,7 @@ public class PublishedMessageTask implements Callable<PublishedMessageTaskResult
                 publishedEventMessage = objectMapper.readValue(consumerRecord.value(), PublishedEventMessage.class);
             } catch (JsonProcessingException e) {
                 log.error("JsonProcessingException occurred while parsing published event message with key {}!", consumerRecord.key(), e);
-                return new PublishedMessageTaskResult(true);
+                return CompletableFuture.completedFuture(null);
             }
 
             try(
@@ -102,7 +102,7 @@ public class PublishedMessageTask implements Callable<PublishedMessageTaskResult
 
                 if (recipients.isEmpty()) {
                     log.info("No recipients found for event. Skipping multiplexing.");
-                    return new PublishedMessageTaskResult(true);
+                    return CompletableFuture.completedFuture(null);
                 }
 
                 log.info("Found {} recipients for event.", recipients.size());
@@ -119,12 +119,11 @@ public class PublishedMessageTask implements Callable<PublishedMessageTaskResult
                     log.error("An unknown error occurred while handling event.", e);
 
                     //We should send these events to a dead-letter-topic in future
-                    return new PublishedMessageTaskResult(true);
+                    return CompletableFuture.completedFuture(null);
                 }
 
                 //Send to Kafka
-                var isSuccessful = sendMessagesToKafka(subscriptionEventMessagesMap, filteredEventMessagesPerRecipient);
-                return new PublishedMessageTaskResult(isSuccessful);
+                return sendMessagesToKafka(subscriptionEventMessagesMap, filteredEventMessagesPerRecipient);
             }
         } finally {
             span.finish();
@@ -138,7 +137,10 @@ public class PublishedMessageTask implements Callable<PublishedMessageTaskResult
      * @param filteredEventMessagesPerRecipient  A map of SubscriptionId to {@link FilterEventMessageWrapper}.
      * @return A list of CompletableFutures representing the asynchronous sending of messages to kafka.
      */
-    private boolean sendMessagesToKafka(Map<String, SubscriptionEventMessage> subscriptionEventMessagesMap, Map<String, FilterEventMessageWrapper> filteredEventMessagesPerRecipient) {
+    private CompletableFuture<Void> sendMessagesToKafka(
+            Map<String, SubscriptionEventMessage> subscriptionEventMessagesMap,
+            Map<String, FilterEventMessageWrapper> filteredEventMessagesPerRecipient
+    ) {
         // todo: remove before merging: review question - shall we keep it the Go way here or rather do the Java-way i.e. toArray(CompletableFuture[0]) in CompletableFuture.allOf below?
         var messagePublishingTasks = new CompletableFuture[subscriptionEventMessagesMap.size()];
         var i = 0;
@@ -148,26 +150,11 @@ public class PublishedMessageTask implements Callable<PublishedMessageTaskResult
                 messagePublishingTasks[i] = sendMessageToKafka(entry.getValue(), filteredEventMessagesPerRecipient);
                 i++;
             } catch (Exception e) {
-                return false;
+                return CompletableFuture.failedFuture(e);
             }
         }
 
-        try {
-            CompletableFuture
-                    .allOf(messagePublishingTasks)
-                    .get();
-        } catch (InterruptedException e) {
-            log.error("Interrupted while waiting for messages to publish", e);
-            return false;
-        } catch (ExecutionException e) {
-            log.error("Unexpected error while waiting for messages to publish", e);
-            return false;
-        } catch(Exception e) {
-            log.error("Unexpected error while publishing multiplexed messages", e);
-            return false;
-        }
-
-        return true;
+        return CompletableFuture.allOf(messagePublishingTasks);
     }
 
     /**
@@ -177,7 +164,10 @@ public class PublishedMessageTask implements Callable<PublishedMessageTaskResult
      * @param filteredEventMessagesPerRecipient A map of SubscriptionId to {@link FilterEventMessageWrapper}.
      * @return CompletableFuture                Tracks the status of the async publishing of the message
      */
-    private CompletableFuture<SendResult<String, String>> sendMessageToKafka(SubscriptionEventMessage subscriptionEventMessage, Map<String, FilterEventMessageWrapper> filteredEventMessagesPerRecipient) throws Exception {
+    private CompletableFuture<SendResult<String, String>> sendMessageToKafka(
+            SubscriptionEventMessage subscriptionEventMessage,
+            Map<String, FilterEventMessageWrapper> filteredEventMessagesPerRecipient
+    ) throws Exception {
         final Callable<CompletableFuture<SendResult<String, String>>> sendMessage = () -> {
             var multiplexSpan = tracer.startScopedSpan("multiplex message");
 

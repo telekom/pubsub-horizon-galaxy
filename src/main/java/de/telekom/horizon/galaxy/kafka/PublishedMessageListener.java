@@ -17,6 +17,9 @@ import org.springframework.kafka.support.Acknowledgment;
 import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.Callable;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.function.Function;
 
 /**
  * The {@code PublishedMessageListener} class is responsible for processing Kafka messages in batches.
@@ -50,22 +53,43 @@ public class PublishedMessageListener extends AbstractConsumerSeekAware implemen
     public void onMessage(List<ConsumerRecord<String, String>> consumerRecords, @NotNull Acknowledgment acknowledgment) {
         final var kafkaNackSleep = Duration.ofMillis(5000);
 
+        final var cancelMessageProcessing = new CompletableFuture<Integer>();
+        final var messagePublishingStatuses = new CompletableFuture[consumerRecords.size()];
         for (int i = 0; i < consumerRecords.size(); i++) {
             var consumerRecord = consumerRecords.get(i);
             var task = newPublishedMessageTaskWithTrace(consumerRecord);
             try {
-                var result = task.call();
-                if (!result.isSuccessful()) {
-                    acknowledgment.nack(i, kafkaNackSleep);
-                    return;
-                }
+                final var messageInBatchIndex = i;
+                messagePublishingStatuses[i] = task
+                        .call()
+                        .exceptionally(ex -> {
+                            cancelMessageProcessing.complete(messageInBatchIndex);
+                            return null;
+                        });
             } catch (Exception e) {
                 log.error("Unexpected error processing event task", e);
+                acknowledgment.nack(i, kafkaNackSleep);
                 throw new RuntimeException(e);
             }
         }
 
-        acknowledgment.acknowledge();
+        try {
+            CompletableFuture
+                    .allOf(messagePublishingStatuses)
+                    .thenApply(v -> -1)
+                    .acceptEither(cancelMessageProcessing, index -> {
+                        if (index < 0) {
+                            acknowledgment.acknowledge();
+                        } else {
+                            acknowledgment.nack(index, kafkaNackSleep);
+                        }
+                    })
+                    .get();
+        } catch (InterruptedException e) {
+            throw new RuntimeException(e);
+        } catch (ExecutionException e) {
+            throw new RuntimeException(e);
+        }
     }
 
     /**
@@ -74,7 +98,7 @@ public class PublishedMessageListener extends AbstractConsumerSeekAware implemen
      * @param consumerRecord the consumer record used to create a task
      * @return a Callable task for processing the received message
      */
-    private Callable<PublishedMessageTaskResult> newPublishedMessageTaskWithTrace(ConsumerRecord<String, String> consumerRecord) {
+    private Callable<CompletableFuture<Void>> newPublishedMessageTaskWithTrace(ConsumerRecord<String, String> consumerRecord) {
         return tracer.withCurrentContext(publishedMessageTaskFactory.newTask(consumerRecord));
     }
 
