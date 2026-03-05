@@ -18,6 +18,7 @@ import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * The {@code PublishedMessageListener} class is responsible for processing Kafka messages in batches.
@@ -31,6 +32,7 @@ import java.util.concurrent.ExecutionException;
 @Slf4j
 public class PublishedMessageListener extends AbstractConsumerSeekAware implements BatchAcknowledgingMessageListener<String, String> {
     private static final Duration KAFKA_NACK_SLEEP = Duration.ofMillis(5000);
+    private static final int NO_NACK_INDEX = -1;
 
     private final PublishedMessageTaskFactory publishedMessageTaskFactory;
     private final HorizonTracer tracer;
@@ -50,27 +52,31 @@ public class PublishedMessageListener extends AbstractConsumerSeekAware implemen
      */
     @Override
     public void onMessage(List<ConsumerRecord<String, String>> consumerRecords, @NotNull Acknowledgment acknowledgment) {
-        final var cancelMessageProcessing = new CompletableFuture<Integer>();
+        final var failedIndex = new AtomicInteger(NO_NACK_INDEX);
         final var messagePublishingStatuses = new CompletableFuture[consumerRecords.size()];
+
         for (int i = 0; i < consumerRecords.size(); i++) {
-            if (cancelMessageProcessing.isDone()) {
-                acknowledgment.nack(i, KAFKA_NACK_SLEEP);
-                return;
+            if (failedIndex.get() != NO_NACK_INDEX) {
+                break;
             }
 
             final var consumerRecord = consumerRecords.get(i);
             final var task = newPublishedMessageTaskWithTrace(consumerRecord);
+            final var messageInBatchIndex = i;
             try {
-                final var messageInBatchIndex = i;
                 messagePublishingStatuses[i] = task
                         .call()
                         .exceptionally(ex -> {
-                            cancelMessageProcessing.complete(messageInBatchIndex);
+                            failedIndex.getAndUpdate(oldValue -> {
+                                if (oldValue == -1) {
+                                    return messageInBatchIndex;
+                                }
+                                return Math.min(messageInBatchIndex, oldValue);
+                            });
                             return null;
                         });
             } catch (Exception e) {
                 log.error("Unexpected error processing event task", e);
-                acknowledgment.nack(i, KAFKA_NACK_SLEEP);
                 throw new RuntimeException(e);
             }
         }
@@ -78,16 +84,16 @@ public class PublishedMessageListener extends AbstractConsumerSeekAware implemen
         try {
             CompletableFuture
                     .allOf(messagePublishingStatuses)
-                    .thenApply(v -> -1)
-                    .acceptEither(cancelMessageProcessing, index -> {
-                        if (index < 0) {
-                            acknowledgment.acknowledge();
-                        } else {
-                            acknowledgment.nack(index, KAFKA_NACK_SLEEP);
-                        }
-                    })
                     .get();
+
+            final var failedIndexValue = failedIndex.get();
+            if (failedIndexValue != NO_NACK_INDEX) {
+                acknowledgment.nack(failedIndexValue, KAFKA_NACK_SLEEP);
+                return;
+            }
+            acknowledgment.acknowledge();
         } catch (InterruptedException e) {
+            log.error("Interrupted while waiting for message publishing", e);
             throw new RuntimeException(e);
         } catch (ExecutionException e) {
             throw new RuntimeException(e);
