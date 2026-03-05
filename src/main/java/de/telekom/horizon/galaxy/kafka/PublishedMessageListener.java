@@ -30,6 +30,7 @@ import java.util.concurrent.ExecutionException;
  */
 @Slf4j
 public class PublishedMessageListener extends AbstractConsumerSeekAware implements BatchAcknowledgingMessageListener<String, String> {
+    private static final Duration KAFKA_NACK_SLEEP = Duration.ofMillis(5000);
 
     private final PublishedMessageTaskFactory publishedMessageTaskFactory;
     private final HorizonTracer tracer;
@@ -49,13 +50,16 @@ public class PublishedMessageListener extends AbstractConsumerSeekAware implemen
      */
     @Override
     public void onMessage(List<ConsumerRecord<String, String>> consumerRecords, @NotNull Acknowledgment acknowledgment) {
-        final var kafkaNackSleep = Duration.ofMillis(5000);
-
         final var cancelMessageProcessing = new CompletableFuture<Integer>();
         final var messagePublishingStatuses = new CompletableFuture[consumerRecords.size()];
         for (int i = 0; i < consumerRecords.size(); i++) {
-            var consumerRecord = consumerRecords.get(i);
-            var task = newPublishedMessageTaskWithTrace(consumerRecord);
+            if (cancelMessageProcessing.isDone()) {
+                acknowledgment.nack(i, KAFKA_NACK_SLEEP);
+                return;
+            }
+
+            final var consumerRecord = consumerRecords.get(i);
+            final var task = newPublishedMessageTaskWithTrace(consumerRecord);
             try {
                 final var messageInBatchIndex = i;
                 messagePublishingStatuses[i] = task
@@ -66,7 +70,7 @@ public class PublishedMessageListener extends AbstractConsumerSeekAware implemen
                         });
             } catch (Exception e) {
                 log.error("Unexpected error processing event task", e);
-                acknowledgment.nack(i, kafkaNackSleep);
+                acknowledgment.nack(i, KAFKA_NACK_SLEEP);
                 throw new RuntimeException(e);
             }
         }
@@ -79,7 +83,7 @@ public class PublishedMessageListener extends AbstractConsumerSeekAware implemen
                         if (index < 0) {
                             acknowledgment.acknowledge();
                         } else {
-                            acknowledgment.nack(index, kafkaNackSleep);
+                            acknowledgment.nack(index, KAFKA_NACK_SLEEP);
                         }
                     })
                     .get();
