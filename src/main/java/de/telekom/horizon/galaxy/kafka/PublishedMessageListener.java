@@ -46,6 +46,18 @@ public class PublishedMessageListener extends AbstractConsumerSeekAware implemen
 
     /**
      * Handles a batch of messages received from Kafka.
+     * The processing logic is as follows:
+     * <ul>
+     *     <li> Messages are sequentially processed, multiplexed and are submitted to the {@code EventWriter} </li>
+     *     <li> The {@code EventWriter} asynchronously manages the message publishing, returning a {@code CompletableFuture} upon message
+     *     submission. The publishing of the multiplexed messages is hence <b>asynchronous</b>. </li>
+     *     <li> The {@code CompletableFuture}s returned by {@code EventWriter}  are collected into a single {@code CompletableFuture} to observe
+     *     the status of the publishing on the <b>ConsumerRecord</b> granularity-level. </li>
+     *     <li> An {@code .exceptionally} callback is registered to track the least index of the failed message inside the {@code ConsumerRecords} batch. </li>
+     *     <li> Message processing is stopped upon first encountered error. As there is no known mechanism to propagate
+     *     the cancellation to the {@code EventWriter}, we wait for the messages submitted for publishing to complete and
+     *     proceed with {@code nack}-ing the batch from the least failedIndex value </li>
+     * </ul>
      *
      * @param consumerRecords the records received from Kafka
      * @param acknowledgment  the acknowledgment object used to nack or ack the batch (partially)
