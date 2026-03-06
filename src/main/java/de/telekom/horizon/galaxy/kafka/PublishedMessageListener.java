@@ -80,11 +80,11 @@ public class PublishedMessageListener extends AbstractConsumerSeekAware implemen
                 messagePublishingStatuses.add(task
                         .call()
                         .exceptionally(ex -> {
-                            failedIndex.getAndUpdate(oldValue -> {
+                            failedIndex.accumulateAndGet(messageInBatchIndex, (oldValue, currentIndex) -> {
                                 if (oldValue == -1) {
-                                    return messageInBatchIndex;
+                                    return currentIndex;
                                 }
-                                return Math.min(messageInBatchIndex, oldValue);
+                                return Math.min(currentIndex, oldValue);
                             });
                             return null;
                         }));
