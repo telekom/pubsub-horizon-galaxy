@@ -139,20 +139,17 @@ public class PublishedMessageTask implements Callable<CompletableFuture<Void>> {
             Map<String, SubscriptionEventMessage> subscriptionEventMessagesMap,
             Map<String, FilterEventMessageWrapper> filteredEventMessagesPerRecipient
     ) {
-        // todo: remove before merging: review question - shall we keep it the Go way here or rather do the Java-way i.e. toArray(CompletableFuture[0]) in CompletableFuture.allOf below?
-        var messagePublishingTasks = new CompletableFuture[subscriptionEventMessagesMap.size()];
-        var i = 0;
+        var messagePublishingTasks = new ArrayList<CompletableFuture<SendResult<String,String>>>(subscriptionEventMessagesMap.size());
         for (var entry : subscriptionEventMessagesMap.entrySet()) {
             log.info("Sending SubscriptionEventMessage for subscription {}.", entry.getKey());
             try {
-                messagePublishingTasks[i] = sendMessageToKafka(entry.getValue(), filteredEventMessagesPerRecipient);
-                i++;
+                messagePublishingTasks.add(sendMessageToKafka(entry.getValue(), filteredEventMessagesPerRecipient));
             } catch (Exception e) {
                 return CompletableFuture.failedFuture(e);
             }
         }
 
-        return CompletableFuture.allOf(messagePublishingTasks);
+        return CompletableFuture.allOf(messagePublishingTasks.toArray(new CompletableFuture[0]));
     }
 
     /**

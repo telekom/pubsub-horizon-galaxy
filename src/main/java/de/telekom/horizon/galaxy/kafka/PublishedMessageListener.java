@@ -14,6 +14,7 @@ import org.springframework.kafka.listener.BatchAcknowledgingMessageListener;
 import org.springframework.kafka.support.Acknowledgment;
 
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
@@ -65,7 +66,7 @@ public class PublishedMessageListener extends AbstractConsumerSeekAware implemen
     @Override
     public void onMessage(List<ConsumerRecord<String, String>> consumerRecords, @NotNull Acknowledgment acknowledgment) {
         final var failedIndex = new AtomicInteger(NO_NACK_INDEX);
-        final var messagePublishingStatuses = new CompletableFuture[consumerRecords.size()];
+        final var messagePublishingStatuses = new ArrayList<CompletableFuture<Void>>(consumerRecords.size());
 
         for (int i = 0; i < consumerRecords.size(); i++) {
             if (failedIndex.get() != NO_NACK_INDEX) {
@@ -76,7 +77,7 @@ public class PublishedMessageListener extends AbstractConsumerSeekAware implemen
             final var task = newPublishedMessageTaskWithTrace(consumerRecord);
             final var messageInBatchIndex = i;
             try {
-                messagePublishingStatuses[i] = task
+                messagePublishingStatuses.add(task
                         .call()
                         .exceptionally(ex -> {
                             failedIndex.getAndUpdate(oldValue -> {
@@ -86,7 +87,7 @@ public class PublishedMessageListener extends AbstractConsumerSeekAware implemen
                                 return Math.min(messageInBatchIndex, oldValue);
                             });
                             return null;
-                        });
+                        }));
             } catch (Exception e) {
                 log.error("Unexpected error processing event task", e);
                 throw new RuntimeException(e);
@@ -95,7 +96,7 @@ public class PublishedMessageListener extends AbstractConsumerSeekAware implemen
 
         try {
             CompletableFuture
-                    .allOf(messagePublishingStatuses)
+                    .allOf(messagePublishingStatuses.toArray(new CompletableFuture[0]))
                     .get();
 
             final var failedIndexValue = failedIndex.get();
@@ -106,6 +107,7 @@ public class PublishedMessageListener extends AbstractConsumerSeekAware implemen
             acknowledgment.acknowledge();
         } catch (InterruptedException e) {
             log.error("Interrupted while waiting for message publishing", e);
+            Thread.currentThread().interrupt();
             throw new RuntimeException(e);
         } catch (ExecutionException e) {
             throw new RuntimeException(e);
