@@ -26,6 +26,16 @@ public class GalaxyConfig {
 
     private int subscriptionMaxThreadPoolSize;
 
+    private int batchQueueCapacity;
+
+    private int subscriptionQueueCapacity;
+
+    private long nackSleepDurationMs;
+
+    private long backpressureResumeCheckIntervalMs;
+
+    private double backpressureResumeThreshold;
+
     private String defaultEnvironment;
 
     @Value("${horizon.kafka.consumingTopic}")

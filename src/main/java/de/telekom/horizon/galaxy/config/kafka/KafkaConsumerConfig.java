@@ -10,6 +10,7 @@ import de.telekom.horizon.galaxy.config.GalaxyConfig;
 import de.telekom.horizon.galaxy.kafka.KafkaConsumerHealthIndicator;
 import de.telekom.horizon.galaxy.kafka.PublishedMessageListener;
 import de.telekom.horizon.galaxy.kafka.PublishedMessageTaskFactory;
+import io.micrometer.core.instrument.MeterRegistry;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.common.errors.AuthenticationException;
 import org.apache.kafka.common.errors.AuthorizationException;
@@ -34,6 +35,14 @@ public class KafkaConsumerConfig {
 
     @Value("${horizon.kafka.fatalExceptionHandlingEnabled:true}")
     private boolean fatalExceptionHandlingEnabled;
+
+    @Bean
+    public PublishedMessageListener publishedMessageListener(PublishedMessageTaskFactory publishedMessageTaskFactory,
+                                                             HorizonTracer horizonTracer,
+                                                             GalaxyConfig galaxyConfig,
+                                                             MeterRegistry meterRegistry) {
+        return new PublishedMessageListener(publishedMessageTaskFactory, horizonTracer, galaxyConfig, meterRegistry);
+    }
 
     /**
      * Creates a custom error handler that marks the application as unhealthy when a fatal exception
@@ -81,21 +90,21 @@ public class KafkaConsumerConfig {
             "hazelcastInstance"
     })
     @Bean
-    public ConcurrentMessageListenerContainer<String, String> concurrentMessageListenerContainer(PublishedMessageTaskFactory publishedMessageTaskFactory,
+    public ConcurrentMessageListenerContainer<String, String> concurrentMessageListenerContainer(PublishedMessageListener listener,
                                                                                                  KafkaProperties props,
                                                                                                  ConsumerFactory<String, String> consumerFactory,
                                                                                                  GalaxyConfig galaxyConfig,
-                                                                                                 HorizonTracer horizonTracer,
                                                                                                  CommonErrorHandler kafkaErrorHandler) {
         var containerProperties = new ContainerProperties(galaxyConfig.getConsumingTopic());
         containerProperties.setAckMode(ContainerProperties.AckMode.MANUAL);
-        containerProperties.setMessageListener(new PublishedMessageListener(publishedMessageTaskFactory, horizonTracer, galaxyConfig));
+        containerProperties.setMessageListener(listener);
         ConcurrentMessageListenerContainer<String, String> listenerContainer = new ConcurrentMessageListenerContainer<>(consumerFactory, containerProperties);
         listenerContainer.setAutoStartup(false);
         listenerContainer.setConcurrency(props.getPartitionCount());
         // bean name is the prefix of kafka consumer thread name
         listenerContainer.setBeanName("kafka-message-listener");
         listenerContainer.setCommonErrorHandler(kafkaErrorHandler);
+
         return listenerContainer;
     }
 
@@ -110,10 +119,10 @@ public class KafkaConsumerConfig {
             return false;
         }
         if (exception instanceof InterruptedException ||
-            exception instanceof InterruptException ||
-            exception instanceof AuthenticationException ||
-            exception instanceof AuthorizationException ||
-            exception instanceof FencedInstanceIdException) {
+                exception instanceof InterruptException ||
+                exception instanceof AuthenticationException ||
+                exception instanceof AuthorizationException ||
+                exception instanceof FencedInstanceIdException) {
             return true;
         }
         return isFatalException(exception.getCause());

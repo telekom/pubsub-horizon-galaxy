@@ -8,6 +8,10 @@ import de.telekom.eni.pandora.horizon.model.event.PublishedEventMessage;
 import de.telekom.eni.pandora.horizon.tracing.HorizonTracer;
 import de.telekom.horizon.galaxy.config.GalaxyConfig;
 import de.telekom.horizon.galaxy.model.PublishedMessageTaskResult;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.binder.jvm.ExecutorServiceMetrics;
+import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.jetbrains.annotations.NotNull;
@@ -18,11 +22,12 @@ import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
-import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.RejectedExecutionException;
 
 /**
  * The {@code PublishedMessageListener} class is responsible for processing Kafka messages in batches.
@@ -38,28 +43,43 @@ import java.util.concurrent.ThreadPoolExecutor;
 public class PublishedMessageListener extends AbstractConsumerSeekAware implements BatchAcknowledgingMessageListener<String, String> {
 
     private final PublishedMessageTaskFactory publishedMessageTaskFactory;
+    @Getter
     private final ThreadPoolTaskExecutor taskExecutor;
     private final HorizonTracer tracer;
+    private final GalaxyConfig galaxyConfig;
+    private final Counter nackCounter;
+    private final Counter nackDueToTaskFailureCounter;
 
-
-    public PublishedMessageListener(PublishedMessageTaskFactory publishedMessageTaskFactory, HorizonTracer horizonTracer, GalaxyConfig galaxyConfig) {
+    public PublishedMessageListener(PublishedMessageTaskFactory publishedMessageTaskFactory, HorizonTracer horizonTracer, GalaxyConfig galaxyConfig, MeterRegistry meterRegistry) {
         super();
         this.publishedMessageTaskFactory = publishedMessageTaskFactory;
         this.tracer = horizonTracer;
+        this.galaxyConfig = galaxyConfig;
 
-        this.taskExecutor = initThreadPoolTaskExecutor(galaxyConfig);
+        this.taskExecutor = initThreadPoolTaskExecutor(galaxyConfig, meterRegistry);
+        this.nackCounter = Counter.builder("pubsub.kafka.listener.nacks")
+                .description("Total number of batch nacks")
+                .register(meterRegistry);
+        this.nackDueToTaskFailureCounter = Counter.builder("pubsub.kafka.listener.nacks.task_failure")
+                .description("Nacks due to task execution failure")
+                .register(meterRegistry);
     }
 
     @NotNull
-    private ThreadPoolTaskExecutor initThreadPoolTaskExecutor(GalaxyConfig galaxyConfig) {
+    private ThreadPoolTaskExecutor initThreadPoolTaskExecutor(GalaxyConfig galaxyConfig, MeterRegistry meterRegistry) {
         final ThreadPoolTaskExecutor threadPoolTaskExecutor = new ThreadPoolTaskExecutor();
         threadPoolTaskExecutor.setCorePoolSize(galaxyConfig.getBatchCoreThreadPoolSize());
         threadPoolTaskExecutor.setMaxPoolSize(galaxyConfig.getBatchMaxThreadPoolSize());
-        threadPoolTaskExecutor.setRejectedExecutionHandler(new ThreadPoolExecutor.CallerRunsPolicy());
+        threadPoolTaskExecutor.setQueueCapacity(galaxyConfig.getBatchQueueCapacity());
         threadPoolTaskExecutor.setPrestartAllCoreThreads(true);
         threadPoolTaskExecutor.setThreadGroupName("batch");
-        threadPoolTaskExecutor.setThreadNamePrefix("batch");
+        threadPoolTaskExecutor.setThreadNamePrefix("batch-");
         threadPoolTaskExecutor.afterPropertiesSet();
+
+        // Register metrics for the thread pool
+        ExecutorServiceMetrics.monitor(meterRegistry, threadPoolTaskExecutor.getThreadPoolExecutor(),
+                "batchTaskExecutor", Collections.emptyList());
+
         return threadPoolTaskExecutor;
     }
 
@@ -72,42 +92,73 @@ public class PublishedMessageListener extends AbstractConsumerSeekAware implemen
     @Override
     public void onMessage(List<ConsumerRecord<String, String>> consumerRecords, @NotNull Acknowledgment acknowledgment) {
         List<Future<PublishedMessageTaskResult>> taskFutureList = new ArrayList<>();
+        int rejectedAtIndex = -1;
 
-        for (ConsumerRecord<String, String> consumerRecord: consumerRecords) {
+        // Submit tasks until rejection or all submitted
+        for (int i = 0; i < consumerRecords.size(); i++) {
+            var consumerRecord = consumerRecords.get(i);
             var task = getPublishedMessageTaskResultCallable(consumerRecord);
-            Future<PublishedMessageTaskResult> taskFuture = taskExecutor.submit(task);
-            taskFutureList.add(taskFuture);
-        }
-
-        var nackIndex = -1;
-        for (int index = 0; index < taskFutureList.size(); index++) {
             try {
-                var taskResult = taskFutureList.get(index).get();
-                if (!taskResult.isSuccessful() && nackIndex == -1) {
-                    nackIndex = index;
-                }
-            } catch (ExecutionException | InterruptedException e) {
-                log.error("Unexpected error processing event task", e);
-                Thread.currentThread().interrupt();
-                throw new RuntimeException(e);
+                Future<PublishedMessageTaskResult> taskFuture = taskExecutor.submit(task);
+                taskFutureList.add(taskFuture);
+            } catch (RejectedExecutionException e) {
+                log.warn("Thread pool queue full, pausing Kafka consumer to apply backpressure at index {}", i);
+                rejectedAtIndex = i;
+                break;
             }
         }
 
-        //If a nackIndex has been set during the processing of the futures, a nack will be sent to Kafka
-        if (nackIndex < 0) {
+        // Wait for all submitted tasks to complete and check for failures
+        var taskFailureIndex = -1;
+        for (int index = 0; index < taskFutureList.size(); index++) {
+            try {
+                var taskResult = taskFutureList.get(index).get();
+                if (!taskResult.isSuccessful() && taskFailureIndex == -1) {
+                    taskFailureIndex = index;
+                }
+            } catch (ExecutionException | InterruptedException e) {
+                log.error("Unexpected error processing event task at index {}", index, e);
+                if (e instanceof InterruptedException) {
+                    Thread.currentThread().interrupt();
+                }
+                if (taskFailureIndex == -1) {
+                    taskFailureIndex = index;
+                }
+                break;
+            }
+        }
+
+        // Determine the earliest failure point (rejection or task failure)
+        int finalNackIndex = determineNackIndex(rejectedAtIndex, taskFailureIndex);
+
+        if (finalNackIndex < 0) {
             acknowledgment.acknowledge();
         } else {
-            acknowledgment.nack(nackIndex, Duration.ofMillis(5000));
+            // Track nack metrics
+            nackCounter.increment();
+            if (taskFailureIndex >= 0) {
+                nackDueToTaskFailureCounter.increment();
+            }
+            acknowledgment.nack(finalNackIndex, Duration.ofMillis(galaxyConfig.getNackSleepDurationMs()));
         }
 
     }
 
     /**
-     * Returns a Callable task wrapped with the current trace context obtained from a consumer record.
+     * Determines the final nack index by taking the minimum of rejection and task failure indices.
+     * This ensures we nack from the earliest failure point, whether it's due to thread pool saturation
+     * or task execution failure.
      *
-     * @param consumerRecord the consumer record used to create a task
-     * @return a Callable task for processing the received message
+     * @param rejectedAtIndex  Index where thread pool rejected task submission (-1 if no rejection)
+     * @param taskFailureIndex Index where a submitted task failed (-1 if no task failure)
+     * @return The minimum valid index, or -1 if both are -1 (success)
      */
+    private int determineNackIndex(int rejectedAtIndex, int taskFailureIndex) {
+        if (rejectedAtIndex < 0) return taskFailureIndex;
+        if (taskFailureIndex < 0) return rejectedAtIndex;
+        return Math.min(rejectedAtIndex, taskFailureIndex);
+    }
+
     @SuppressWarnings("unchecked")
     private Callable<PublishedMessageTaskResult> getPublishedMessageTaskResultCallable(ConsumerRecord<String, String> consumerRecord) {
         return (Callable<PublishedMessageTaskResult>) tracer.withCurrentTraceContext(publishedMessageTaskFactory.newTask(consumerRecord));

@@ -14,11 +14,16 @@ import de.telekom.eni.pandora.horizon.tracing.HorizonTracer;
 import de.telekom.horizon.galaxy.cache.PayloadSizeHistogramCache;
 import de.telekom.horizon.galaxy.cache.SubscriberCache;
 import de.telekom.horizon.galaxy.config.GalaxyConfig;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.binder.jvm.ExecutorServiceMetrics;
 import lombok.Getter;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.stereotype.Component;
+
+import java.util.Collections;
 
 /**
  * Factory for creating tasks associated with a published message.
@@ -39,9 +44,11 @@ public class PublishedMessageTaskFactory {
     private final PayloadSizeHistogramCache outgoingPayloadSizeHistogramCache;
     private final GalaxyConfig galaxyConfig;
     private final ObjectMapper objectMapper;
+    private final MeterRegistry meterRegistry;
+    private final ThreadPoolTaskExecutor subscriptionTaskExecutor;
 
     @Autowired
-    public PublishedMessageTaskFactory(HorizonTracer tracer, EventWriter eventWriter, HorizonMetricsHelper metricsHelper, SubscriberCache subscriptionCache, DeDuplicationService deDuplicationService, KafkaProperties kafkaProperties, @Qualifier("incomingPayloadSizeCache") PayloadSizeHistogramCache incomingPayloadSizeCache, @Qualifier("outgoingPayloadSizeCache") PayloadSizeHistogramCache outgoingPayloadSizeHistogramCache, GalaxyConfig galaxyConfig, ObjectMapper objectMapper) {
+    public PublishedMessageTaskFactory(HorizonTracer tracer, EventWriter eventWriter, HorizonMetricsHelper metricsHelper, SubscriberCache subscriptionCache, DeDuplicationService deDuplicationService, KafkaProperties kafkaProperties, @Qualifier("incomingPayloadSizeCache") PayloadSizeHistogramCache incomingPayloadSizeCache, @Qualifier("outgoingPayloadSizeCache") PayloadSizeHistogramCache outgoingPayloadSizeHistogramCache, GalaxyConfig galaxyConfig, ObjectMapper objectMapper, MeterRegistry meterRegistry) {
         this.tracer = tracer;
         this.eventWriter = eventWriter;
         this.metricsHelper = metricsHelper;
@@ -52,6 +59,25 @@ public class PublishedMessageTaskFactory {
         this.outgoingPayloadSizeHistogramCache = outgoingPayloadSizeHistogramCache;
         this.galaxyConfig = galaxyConfig;
         this.objectMapper = objectMapper;
+        this.meterRegistry = meterRegistry;
+        this.subscriptionTaskExecutor = initSubscriptionThreadPoolTaskExecutor();
+    }
+
+    private ThreadPoolTaskExecutor initSubscriptionThreadPoolTaskExecutor() {
+        final ThreadPoolTaskExecutor threadPoolTaskExecutor = new ThreadPoolTaskExecutor();
+        threadPoolTaskExecutor.setThreadGroupName("multiplex");
+        threadPoolTaskExecutor.setThreadNamePrefix("multiplex-");
+        threadPoolTaskExecutor.setCorePoolSize(galaxyConfig.getSubscriptionCoreThreadPoolSize());
+        threadPoolTaskExecutor.setMaxPoolSize(galaxyConfig.getSubscriptionMaxThreadPoolSize());
+        threadPoolTaskExecutor.setQueueCapacity(galaxyConfig.getSubscriptionQueueCapacity());
+        threadPoolTaskExecutor.setPrestartAllCoreThreads(true);
+        threadPoolTaskExecutor.afterPropertiesSet();
+        
+        // Register metrics for the thread pool
+        ExecutorServiceMetrics.monitor(meterRegistry, threadPoolTaskExecutor.getThreadPoolExecutor(), 
+            "subscriptionTaskExecutor", Collections.emptyList());
+        
+        return threadPoolTaskExecutor;
     }
 
     public PublishedMessageTask newTask(ConsumerRecord<String, String> consumerRecord) {
