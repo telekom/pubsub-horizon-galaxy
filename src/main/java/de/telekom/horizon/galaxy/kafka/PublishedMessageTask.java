@@ -24,17 +24,17 @@ import de.telekom.horizon.galaxy.cache.PayloadSizeHistogramCache;
 import de.telekom.horizon.galaxy.cache.SubscriberCache;
 import de.telekom.horizon.galaxy.config.GalaxyConfig;
 import de.telekom.horizon.galaxy.model.EvaluationResultStatus;
-import de.telekom.horizon.galaxy.model.PublishedMessageTaskResult;
 import de.telekom.horizon.galaxy.filters.FilterEventMessageWrapper;
 import de.telekom.horizon.galaxy.filters.Filters;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.jetbrains.annotations.NotNull;
 import org.slf4j.MDC;
+import org.springframework.kafka.support.SendResult;
 
 import java.util.*;
 import java.util.concurrent.Callable;
-import java.util.concurrent.ExecutionException;
+import java.util.concurrent.CompletableFuture;
 import java.util.regex.Pattern;
 
 import static de.telekom.eni.pandora.horizon.metrics.HorizonMetricsConstants.METRIC_MULTIPLEXED_EVENTS;
@@ -46,7 +46,7 @@ import static de.telekom.eni.pandora.horizon.metrics.HorizonMetricsConstants.MET
  * creating {@link SubscriptionEventMessage} for all recipients, and sending them to Kafka.
  */
 @Slf4j
-public class PublishedMessageTask implements Callable<PublishedMessageTaskResult> {
+public class PublishedMessageTask implements Callable<CompletableFuture<Void>> {
 
     private final ObjectMapper objectMapper;
     private final ConsumerRecord<String, String> consumerRecord;
@@ -75,7 +75,7 @@ public class PublishedMessageTask implements Callable<PublishedMessageTaskResult
     }
 
     @Override
-    public PublishedMessageTaskResult call() {
+    public CompletableFuture<Void> call() {
         //Start main span for published-message-task
         var span = tracer.startSpanFromKafkaHeaders("consume published message", consumerRecord.headers());
         try (var ignored = tracer.withSpanInScope(span)) {
@@ -84,7 +84,7 @@ public class PublishedMessageTask implements Callable<PublishedMessageTaskResult
                 publishedEventMessage = objectMapper.readValue(consumerRecord.value(), PublishedEventMessage.class);
             } catch (JsonProcessingException e) {
                 log.error("JsonProcessingException occurred while parsing published event message with key {}!", consumerRecord.key(), e);
-                return new PublishedMessageTaskResult(true);
+                return CompletableFuture.completedFuture(null);
             }
 
             try(
@@ -100,7 +100,7 @@ public class PublishedMessageTask implements Callable<PublishedMessageTaskResult
 
                 if (recipients.isEmpty()) {
                     log.info("No recipients found for event. Skipping multiplexing.");
-                    return new PublishedMessageTaskResult(true);
+                    return CompletableFuture.completedFuture(null);
                 }
 
                 log.info("Found {} recipients for event.", recipients.size());
@@ -117,12 +117,11 @@ public class PublishedMessageTask implements Callable<PublishedMessageTaskResult
                     log.error("An unknown error occurred while handling event.", e);
 
                     //We should send these events to a dead-letter-topic in future
-                    return new PublishedMessageTaskResult(true);
+                    return CompletableFuture.completedFuture(null);
                 }
 
                 //Send to Kafka
-                var isSuccessful = sendMessagesToKafka(subscriptionEventMessagesMap, filteredEventMessagesPerRecipient);
-                return new PublishedMessageTaskResult(isSuccessful);
+                return sendMessagesToKafka(subscriptionEventMessagesMap, filteredEventMessagesPerRecipient);
             }
         } finally {
             span.finish();
@@ -136,26 +135,35 @@ public class PublishedMessageTask implements Callable<PublishedMessageTaskResult
      * @param filteredEventMessagesPerRecipient  A map of SubscriptionId to {@link FilterEventMessageWrapper}.
      * @return A list of CompletableFutures representing the asynchronous sending of messages to kafka.
      */
-    private boolean sendMessagesToKafka(Map<String, SubscriptionEventMessage> subscriptionEventMessagesMap, Map<String, FilterEventMessageWrapper> filteredEventMessagesPerRecipient) {
+    private CompletableFuture<Void> sendMessagesToKafka(
+            Map<String, SubscriptionEventMessage> subscriptionEventMessagesMap,
+            Map<String, FilterEventMessageWrapper> filteredEventMessagesPerRecipient
+    ) {
+        var messagePublishingTasks = new ArrayList<CompletableFuture<SendResult<String,String>>>(subscriptionEventMessagesMap.size());
         for (var entry : subscriptionEventMessagesMap.entrySet()) {
             log.info("Sending SubscriptionEventMessage for subscription {}.", entry.getKey());
             try {
-                sendMessageToKafka(entry.getValue(), filteredEventMessagesPerRecipient);
+                messagePublishingTasks.add(sendMessageToKafka(entry.getValue(), filteredEventMessagesPerRecipient));
             } catch (Exception e) {
-                return false;
+                return CompletableFuture.failedFuture(e);
             }
         }
-        return true;
+
+        return CompletableFuture.allOf(messagePublishingTasks.toArray(new CompletableFuture[0]));
     }
 
     /**
      * Sends either an {@link SubscriptionEventMessage} or an ({@link Status#FAILED}|{@link Status#DROPPED} {@link StatusMessage} in a new Task to Kafka for the given {@link SubscriptionEventMessage}.
      *
-     * @param subscriptionEventMessage             The SubscriptionEventMessage to send.
-     * @param filteredEventMessagesPerRecipient    A map of SubscriptionId to {@link FilterEventMessageWrapper}.
+     * @param subscriptionEventMessage          The SubscriptionEventMessage to send.
+     * @param filteredEventMessagesPerRecipient A map of SubscriptionId to {@link FilterEventMessageWrapper}.
+     * @return CompletableFuture                Tracks the status of the async publishing of the message
      */
-    private void sendMessageToKafka(SubscriptionEventMessage subscriptionEventMessage, Map<String, FilterEventMessageWrapper> filteredEventMessagesPerRecipient) {
-        final Runnable sendMessage = () -> {
+    private CompletableFuture<SendResult<String, String>> sendMessageToKafka(
+            SubscriptionEventMessage subscriptionEventMessage,
+            Map<String, FilterEventMessageWrapper> filteredEventMessagesPerRecipient
+    ) throws Exception {
+        final Callable<CompletableFuture<SendResult<String, String>>> sendMessage = () -> {
             var multiplexSpan = tracer.startScopedSpan("multiplex message");
 
             var subscriptionId = subscriptionEventMessage.getSubscriptionId();
@@ -164,22 +172,25 @@ public class PublishedMessageTask implements Callable<PublishedMessageTaskResult
             recordOutgoingPayloadSize(subscriptionEventMessage);
             enrichTracing(multiplexSpan, subscriptionEventMessage, subscriptionFilter);
 
+            CompletableFuture<SendResult<String, String>> result;
             try {
-                sendOutgoingMessage(subscriptionFilter, subscriptionEventMessage);
+                result = sendOutgoingMessage(subscriptionFilter, subscriptionEventMessage);
                 log.info("Successfully sent SubscriptionEventMessage for subscription {}.", subscriptionId);
                 trackEventForDeduplication(subscriptionEventMessage);
-            } catch (ExecutionException | JsonProcessingException | InterruptedException e) {
+            } catch (JsonProcessingException e) {
                 log.error("An error occurred while sending SubscriptionEventMessage for subscription {}!", subscriptionId, e);
-                sendFailedStatusMessage(subscriptionEventMessage);
+                result = sendFailedStatusMessage(subscriptionEventMessage);
                 trackEventForDeduplication(subscriptionEventMessage);
             } finally {
                 var tags = metricsHelper.buildTagsFromSubscriptionEventMessage(subscriptionEventMessage);
                 metricsHelper.getRegistry().counter(METRIC_MULTIPLEXED_EVENTS, tags).increment();
                 multiplexSpan.finish();
             }
+
+            return result;
         };
 
-        tracer.withCurrentTraceContext(sendMessage).run();
+        return tracer.withCurrentContext(sendMessage).call();
     }
 
     /**
@@ -215,22 +226,18 @@ public class PublishedMessageTask implements Callable<PublishedMessageTaskResult
      * Creates a {@link StatusMessage} indicating the event delivery has failed and sends this {@link Status#FAILED} message <br>synchronously</br> to Kafka.
      * If an error occurs during this process, it is logged, and a new {@link RuntimeException} is thrown.
      *
-     * @throws RuntimeException thrown if an error occurs while sending the {@link Status#FAILED} status message
      * @param subscriptionEventMessage the event message that failed to be delivered
+     * @return CompletableFuture to track the status of the async publishing of the message
+     * @throws RuntimeException thrown if an error occurs while sending the {@link Status#FAILED} status message
      */
-    private void sendFailedStatusMessage(SubscriptionEventMessage subscriptionEventMessage) {
+    private CompletableFuture<SendResult<String, String>> sendFailedStatusMessage(SubscriptionEventMessage subscriptionEventMessage) {
         var event = subscriptionEventMessage.getEvent();
         var partialEvent = new PartialEvent(event.getId(), event.getType(), event.getTime());
         var statusMessage = new StatusMessage(subscriptionEventMessage.getUuid(), partialEvent, subscriptionEventMessage.getSubscriptionId(), Status.FAILED, subscriptionEventMessage.getDeliveryType());
 
         try {
-            eventWriter.send(Objects.requireNonNullElse(subscriptionEventMessage.getEventRetentionTime(), EventRetentionTime.DEFAULT).getTopic(), statusMessage, tracer).get();
-        } catch (InterruptedException ex) {
-            Thread.currentThread().interrupt();
-            if (Thread.interrupted()) {
-                throw new RuntimeException(ex);
-            }
-        } catch (ExecutionException | JsonProcessingException ex) {
+            return eventWriter.send(Objects.requireNonNullElse(subscriptionEventMessage.getEventRetentionTime(), EventRetentionTime.DEFAULT).getTopic(), statusMessage, tracer);
+        } catch (JsonProcessingException ex) {
             log.error("JsonProcessingException occurred while handling the exception from the multiplex task! Nack-ing event {}. May lead into nack-loop...", statusMessage, ex);
             throw new RuntimeException(ex);
         }
@@ -258,20 +265,19 @@ public class PublishedMessageTask implements Callable<PublishedMessageTaskResult
     }
 
     /**
-     * This method sends the {@link SubscriptionEventMessage} <b>synchronously</b> to kafka  if the filter was successful,
+     * This method sends the {@link SubscriptionEventMessage} <b>asynchronously</b> to kafka  if the filter was successful,
      * else creates a {@link Status#DROPPED} {@link StatusMessage} and sends it to kafka.
      * <p>
      * The messages are filtered according to the subscriptionFilter,
      * and then they are sent to the relevant topics. Performance metrics
      * are recorded and used for observation.
      *
-     * @param subscriptionFilter        the applied filters of the {@link SubscriptionEventMessage}, unsuccessful or successful
-     * @param subscriptionEventMessage  the event message sent to the kafka (if not dropped)
-     * @throws ExecutionException       thrown when unable to complete the computation task
-     * @throws JsonProcessingException  thrown when there is a problem parsing the payload
-     * @throws InterruptedException     thrown when a thread is interrupted
+     * @param subscriptionFilter       the applied filters of the {@link SubscriptionEventMessage}, unsuccessful or successful
+     * @param subscriptionEventMessage the event message sent to the kafka (if not dropped)
+     * @return CompletableFuture       tracks the status of the async publishing of the message
+     * @throws JsonProcessingException thrown when there is a problem parsing the payload
      */
-    private void sendOutgoingMessage(FilterEventMessageWrapper subscriptionFilter, SubscriptionEventMessage subscriptionEventMessage) throws JsonProcessingException, ExecutionException, InterruptedException {
+    private CompletableFuture<SendResult<String, String>> sendOutgoingMessage(FilterEventMessageWrapper subscriptionFilter, SubscriptionEventMessage subscriptionEventMessage) throws JsonProcessingException {
         var properties = tracer.getCurrentTracingHeaders();
 
         IdentifiableMessage outgoingMessage;
@@ -299,7 +305,7 @@ public class PublishedMessageTask implements Callable<PublishedMessageTaskResult
             outgoingMessage = droppedMessage;
         }
 
-        eventWriter.send(Objects.requireNonNullElse(subscriptionEventMessage.getEventRetentionTime(), EventRetentionTime.DEFAULT).getTopic(), outgoingMessage, tracer).get();
+        return eventWriter.send(Objects.requireNonNullElse(subscriptionEventMessage.getEventRetentionTime(), EventRetentionTime.DEFAULT).getTopic(), outgoingMessage, tracer);
     }
 
     /**
