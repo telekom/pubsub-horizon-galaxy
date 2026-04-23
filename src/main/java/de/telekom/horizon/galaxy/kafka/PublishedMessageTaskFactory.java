@@ -41,7 +41,17 @@ public class PublishedMessageTaskFactory {
     private final ObjectMapper objectMapper;
 
     @Autowired
-    public PublishedMessageTaskFactory(HorizonTracer tracer, EventWriter eventWriter, HorizonMetricsHelper metricsHelper, SubscriberCache subscriptionCache, DeDuplicationService deDuplicationService, KafkaProperties kafkaProperties, @Qualifier("incomingPayloadSizeCache") PayloadSizeHistogramCache incomingPayloadSizeCache, @Qualifier("outgoingPayloadSizeCache") PayloadSizeHistogramCache outgoingPayloadSizeHistogramCache, GalaxyConfig galaxyConfig, ObjectMapper objectMapper) {
+    public PublishedMessageTaskFactory(HorizonTracer tracer,
+                                       EventWriter eventWriter,
+                                       HorizonMetricsHelper metricsHelper,
+                                       SubscriberCache subscriptionCache,
+                                       DeDuplicationService deDuplicationService,
+                                       KafkaProperties kafkaProperties,
+                                       @Qualifier("incomingPayloadSizeCache") PayloadSizeHistogramCache incomingPayloadSizeCache,
+                                       @Qualifier("outgoingPayloadSizeCache") PayloadSizeHistogramCache outgoingPayloadSizeHistogramCache,
+                                       GalaxyConfig galaxyConfig,
+                                       ObjectMapper objectMapper
+    ) {
         this.tracer = tracer;
         this.eventWriter = eventWriter;
         this.metricsHelper = metricsHelper;
