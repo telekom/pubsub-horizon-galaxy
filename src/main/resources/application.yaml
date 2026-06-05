@@ -26,6 +26,7 @@ horizon:
     autoCommit: ${GALAXY_KAFKA_AUTO_COMMIT:false}
     lingerMs: ${GALAXY_KAFKA_LINGER_MS:0}
     acks: ${GALAXY_KAFKA_ACKS:1}
+    maxPollRecords: ${GALAXY_KAFKA_MAX_POLL_RECORDS:500}
     maxRequestSize: ${GALAXY_KAFKA_MAXREQUESTSIZE:1101004}
     fatalExceptionHandlingEnabled: ${GALAXY_KAFKA_FATAL_EXCEPTION_HANDLING_ENABLED:true}
     compression:
