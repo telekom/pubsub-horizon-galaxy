@@ -61,7 +61,7 @@ public class PayloadSizeHistogramCache {
         var key = keyBuilder.toString();
 
         cache.computeIfAbsent(key, k -> DistributionSummary.builder(metricName)
-                .publishPercentileHistogram()
+                .serviceLevelObjectives(1024, 4096, 16384, 65536, 262144, 524288, 1048576)
                 .baseUnit("bytes")
                 .tags(buildTagsFromMessage(message))
                 .register(metricsHelper.getRegistry()));
