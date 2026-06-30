@@ -134,8 +134,6 @@ public class PublishedMessageListener extends AbstractConsumerSeekAware implemen
      * This ensures we nack from the earliest failure point, whether it's due to thread pool saturation
      * or task execution failure.
      *
-     * @param rejectedAtIndex  Index where thread pool rejected task submission (-1 if no rejection)
-     * @param taskFailureIndex Index where a submitted task failed (-1 if no task failure)
      * @return The minimum valid index, or -1 if both are -1 (success)
      */
     private Callable<CompletableFuture<Void>> newPublishedMessageTaskWithTrace(ConsumerRecord<String, String> consumerRecord) {
