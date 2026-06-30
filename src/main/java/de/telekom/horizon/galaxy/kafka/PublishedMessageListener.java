@@ -6,6 +6,10 @@ package de.telekom.horizon.galaxy.kafka;
 
 import de.telekom.eni.pandora.horizon.model.event.PublishedEventMessage;
 import de.telekom.eni.pandora.horizon.tracing.HorizonTracer;
+import de.telekom.horizon.galaxy.config.GalaxyConfig;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.binder.jvm.ExecutorServiceMetrics;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.jetbrains.annotations.NotNull;
@@ -15,6 +19,7 @@ import org.springframework.kafka.support.Acknowledgment;
 
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
@@ -37,12 +42,22 @@ public class PublishedMessageListener extends AbstractConsumerSeekAware implemen
 
     private final PublishedMessageTaskFactory publishedMessageTaskFactory;
     private final HorizonTracer tracer;
+    private final GalaxyConfig galaxyConfig;
+    private final Counter nackCounter;
+    private final Counter nackDueToTaskFailureCounter;
 
-    public PublishedMessageListener(PublishedMessageTaskFactory publishedMessageTaskFactory, HorizonTracer horizonTracer) {
+    public PublishedMessageListener(PublishedMessageTaskFactory publishedMessageTaskFactory, HorizonTracer horizonTracer, GalaxyConfig galaxyConfig, MeterRegistry meterRegistry) {
         super();
         this.publishedMessageTaskFactory = publishedMessageTaskFactory;
         this.tracer = horizonTracer;
+        this.galaxyConfig = galaxyConfig;
 
+        this.nackCounter = Counter.builder("pubsub.kafka.listener.nacks")
+                .description("Total number of batch nacks")
+                .register(meterRegistry);
+        this.nackDueToTaskFailureCounter = Counter.builder("pubsub.kafka.listener.nacks.task_failure")
+                .description("Nacks due to task execution failure")
+                .register(meterRegistry);
     }
 
     /**
@@ -115,10 +130,13 @@ public class PublishedMessageListener extends AbstractConsumerSeekAware implemen
     }
 
     /**
-     * Returns a Callable task wrapped with the current trace context obtained from a consumer record.
+     * Determines the final nack index by taking the minimum of rejection and task failure indices.
+     * This ensures we nack from the earliest failure point, whether it's due to thread pool saturation
+     * or task execution failure.
      *
-     * @param consumerRecord the consumer record used to create a task
-     * @return a Callable task for processing the received message
+     * @param rejectedAtIndex  Index where thread pool rejected task submission (-1 if no rejection)
+     * @param taskFailureIndex Index where a submitted task failed (-1 if no task failure)
+     * @return The minimum valid index, or -1 if both are -1 (success)
      */
     private Callable<CompletableFuture<Void>> newPublishedMessageTaskWithTrace(ConsumerRecord<String, String> consumerRecord) {
         return tracer.withCurrentContext(publishedMessageTaskFactory.newTask(consumerRecord));

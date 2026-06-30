@@ -26,6 +26,8 @@ import de.telekom.horizon.galaxy.config.GalaxyConfig;
 import de.telekom.horizon.galaxy.model.EvaluationResultStatus;
 import de.telekom.horizon.galaxy.filters.FilterEventMessageWrapper;
 import de.telekom.horizon.galaxy.filters.Filters;
+import de.telekom.horizon.galaxy.model.EvaluationResultStatus;
+import de.telekom.horizon.galaxy.model.PublishedMessageTaskResult;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.jetbrains.annotations.NotNull;
@@ -85,6 +87,7 @@ public class PublishedMessageTask implements Callable<CompletableFuture<Void>> {
             } catch (JsonProcessingException e) {
                 log.error("JsonProcessingException occurred while parsing published event message with key {}!", consumerRecord.key(), e);
                 return CompletableFuture.completedFuture(null);
+                // Better to move to DLQ for messages that are not parseable
             }
 
             try(

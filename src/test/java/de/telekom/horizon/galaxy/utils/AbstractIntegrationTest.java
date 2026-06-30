@@ -112,6 +112,8 @@ public abstract class AbstractIntegrationTest {
         registry.add("horizon.cache.kubernetesServiceDns", () -> "");
         registry.add("horizon.cache.deDuplication.enabled", () -> true);
         registry.add("kubernetes.enabled", () -> false);
+        // Disable automatic backpressure monitor scheduling for integration tests
+        registry.add("galaxy.backpressure-resume-check-interval-ms", () -> 999999999);
     }
 
     public ConsumerRecord<String, String> pollForRecord(int timeout, TimeUnit timeUnit) throws InterruptedException {
