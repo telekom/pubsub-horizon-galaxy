@@ -24,6 +24,7 @@ SPDX-License-Identifier: Apache-2.0
 [![REUSE status](https://api.reuse.software/badge/github.com/telekom/pubsub-horizon-galaxy)](https://api.reuse.software/info/github.com/telekom/pubsub-horizon-galaxy)
 -->
 [![Gradle Build and Test](https://github.com/telekom/pubsub-horizon-galaxy/actions/workflows/gradle-build.yml/badge.svg)](https://github.com/telekom/pubsub-horizon-galaxy/actions/workflows/gradle-build.yml)
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/telekom/pubsub-horizon-galaxy)
 
 ## Overview
 
