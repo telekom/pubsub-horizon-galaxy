@@ -39,9 +39,8 @@ public class KafkaConsumerConfig {
     @Bean
     public PublishedMessageListener publishedMessageListener(PublishedMessageTaskFactory publishedMessageTaskFactory,
                                                              HorizonTracer horizonTracer,
-                                                             GalaxyConfig galaxyConfig,
                                                              MeterRegistry meterRegistry) {
-        return new PublishedMessageListener(publishedMessageTaskFactory, horizonTracer, galaxyConfig, meterRegistry);
+        return new PublishedMessageListener(publishedMessageTaskFactory, horizonTracer, meterRegistry);
     }
 
     /**

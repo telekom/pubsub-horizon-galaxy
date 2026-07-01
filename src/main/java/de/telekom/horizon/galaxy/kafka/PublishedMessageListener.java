@@ -6,10 +6,8 @@ package de.telekom.horizon.galaxy.kafka;
 
 import de.telekom.eni.pandora.horizon.model.event.PublishedEventMessage;
 import de.telekom.eni.pandora.horizon.tracing.HorizonTracer;
-import de.telekom.horizon.galaxy.config.GalaxyConfig;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
-import io.micrometer.core.instrument.binder.jvm.ExecutorServiceMetrics;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.jetbrains.annotations.NotNull;
@@ -19,7 +17,6 @@ import org.springframework.kafka.support.Acknowledgment;
 
 import java.time.Duration;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
@@ -42,15 +39,13 @@ public class PublishedMessageListener extends AbstractConsumerSeekAware implemen
 
     private final PublishedMessageTaskFactory publishedMessageTaskFactory;
     private final HorizonTracer tracer;
-    private final GalaxyConfig galaxyConfig;
     private final Counter nackCounter;
     private final Counter nackDueToTaskFailureCounter;
 
-    public PublishedMessageListener(PublishedMessageTaskFactory publishedMessageTaskFactory, HorizonTracer horizonTracer, GalaxyConfig galaxyConfig, MeterRegistry meterRegistry) {
+    public PublishedMessageListener(PublishedMessageTaskFactory publishedMessageTaskFactory, HorizonTracer horizonTracer, MeterRegistry meterRegistry) {
         super();
         this.publishedMessageTaskFactory = publishedMessageTaskFactory;
         this.tracer = horizonTracer;
-        this.galaxyConfig = galaxyConfig;
 
         this.nackCounter = Counter.builder("pubsub.kafka.listener.nacks")
                 .description("Total number of batch nacks")
@@ -117,25 +112,22 @@ public class PublishedMessageListener extends AbstractConsumerSeekAware implemen
             final var failedIndexValue = failedIndex.get();
             if (failedIndexValue != NO_NACK_INDEX) {
                 acknowledgment.nack(failedIndexValue, KAFKA_NACK_SLEEP);
+                nackCounter.increment();
+                nackDueToTaskFailureCounter.increment();
                 return;
             }
             acknowledgment.acknowledge();
         } catch (InterruptedException e) {
             log.error("Interrupted while waiting for message publishing", e);
             Thread.currentThread().interrupt();
+            nackCounter.increment();
             throw new RuntimeException(e);
         } catch (ExecutionException e) {
+            nackCounter.increment();
             throw new RuntimeException(e);
         }
     }
 
-    /**
-     * Determines the final nack index by taking the minimum of rejection and task failure indices.
-     * This ensures we nack from the earliest failure point, whether it's due to thread pool saturation
-     * or task execution failure.
-     *
-     * @return The minimum valid index, or -1 if both are -1 (success)
-     */
     private Callable<CompletableFuture<Void>> newPublishedMessageTaskWithTrace(ConsumerRecord<String, String> consumerRecord) {
         return tracer.withCurrentContext(publishedMessageTaskFactory.newTask(consumerRecord));
     }
