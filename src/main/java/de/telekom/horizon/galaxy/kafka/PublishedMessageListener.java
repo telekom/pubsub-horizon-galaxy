@@ -79,28 +79,23 @@ public class PublishedMessageListener extends AbstractConsumerSeekAware implemen
         final var messagePublishingStatuses = new ArrayList<CompletableFuture<Void>>(consumerRecords.size());
 
         for (int i = 0; i < consumerRecords.size(); i++) {
-            if (failedIndex.get() != NO_NACK_INDEX) {
-                break;
-            }
-
             final var consumerRecord = consumerRecords.get(i);
             final var task = newPublishedMessageTaskWithTrace(consumerRecord);
             final var messageInBatchIndex = i;
+
             try {
                 messagePublishingStatuses.add(task
                         .call()
                         .exceptionally(ex -> {
-                            failedIndex.accumulateAndGet(messageInBatchIndex, (oldValue, currentIndex) -> {
-                                if (oldValue == -1) {
-                                    return currentIndex;
-                                }
-                                return Math.min(currentIndex, oldValue);
-                            });
+                            updateFailedIndex(failedIndex, messageInBatchIndex);
+                            nackDueToTaskFailureCounter.increment();
                             return null;
                         }));
             } catch (Exception e) {
+                // we continue processing other messages in batch
                 log.error("Unexpected error processing event task", e);
-                throw new RuntimeException(e);
+                updateFailedIndex(failedIndex, messageInBatchIndex);
+                nackDueToTaskFailureCounter.increment();
             }
         }
 
@@ -113,7 +108,6 @@ public class PublishedMessageListener extends AbstractConsumerSeekAware implemen
             if (failedIndexValue != NO_NACK_INDEX) {
                 acknowledgment.nack(failedIndexValue, KAFKA_NACK_SLEEP);
                 nackCounter.increment();
-                nackDueToTaskFailureCounter.increment();
                 return;
             }
             acknowledgment.acknowledge();
@@ -123,9 +117,19 @@ public class PublishedMessageListener extends AbstractConsumerSeekAware implemen
             nackCounter.increment();
             throw new RuntimeException(e);
         } catch (ExecutionException e) {
+            log.warn("Unexpected ExecutionException while waiting for message publishing; must never happen", e);
             nackCounter.increment();
             throw new RuntimeException(e);
         }
+    }
+
+    private void updateFailedIndex(final AtomicInteger failedIndex, final int currentIndex) {
+        failedIndex.accumulateAndGet(currentIndex, (oldIndex, newIndex) -> {
+            if (oldIndex == NO_NACK_INDEX) {
+                return newIndex;
+            }
+            return Math.min(currentIndex, newIndex);
+        });
     }
 
     private Callable<CompletableFuture<Void>> newPublishedMessageTaskWithTrace(ConsumerRecord<String, String> consumerRecord) {
