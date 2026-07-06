@@ -11,7 +11,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.MissingNode;
 import de.telekom.eni.pandora.horizon.cache.service.DeDuplicationService;
 import de.telekom.eni.pandora.horizon.kafka.event.EventWriter;
-import de.telekom.eni.pandora.horizon.kubernetes.resource.SubscriptionResource;
+import de.telekom.eni.pandora.horizon.kubernetes.resource.Subscription;
 import de.telekom.eni.pandora.horizon.metrics.AdditionalFields;
 import de.telekom.eni.pandora.horizon.metrics.HorizonMetricsHelper;
 import de.telekom.eni.pandora.horizon.model.db.PartialEvent;
@@ -28,7 +28,6 @@ import de.telekom.horizon.galaxy.filters.FilterEventMessageWrapper;
 import de.telekom.horizon.galaxy.filters.Filters;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
-import org.jetbrains.annotations.NotNull;
 import org.slf4j.MDC;
 import org.springframework.kafka.support.SendResult;
 
@@ -47,6 +46,7 @@ import static de.telekom.eni.pandora.horizon.metrics.HorizonMetricsConstants.MET
  */
 @Slf4j
 public class PublishedMessageTask implements Callable<CompletableFuture<Void>> {
+    private static final Pattern jsonMediaTypeRegex = Pattern.compile("^application/(?:[a-zA-Z0-9]+\\+)?json.*", Pattern.CASE_INSENSITIVE);
 
     private final ObjectMapper objectMapper;
     private final ConsumerRecord<String, String> consumerRecord;
@@ -88,94 +88,80 @@ public class PublishedMessageTask implements Callable<CompletableFuture<Void>> {
                 return CompletableFuture.completedFuture(null);
             }
 
-            try(
+            try (
                     var ignored1 = MDC.putCloseable("UUID", publishedEventMessage.getUuid());
                     var ignored2 = MDC.putCloseable("EventId", publishedEventMessage.getEvent().getId())
             ) {
                 recordIncomingPayloadSize();
 
                 log.info("Created Task from ConsumerRecord.");
-
-                //Retrieve recipients for event and remove duplicates
-                var recipients = getRecipientsForPublishedEventMessage(publishedEventMessage);
-
-                if (recipients.isEmpty()) {
+                final var event = publishedEventMessage.getEvent();
+                final var eventType = event.getType();
+                final var subscriptionResources = subscriptionCache.getSubscriptionsForEnvironmentAndEventType(publishedEventMessage.getEnvironment(), eventType);
+                if (subscriptionResources == null) {
                     log.info("No recipients found for event. Skipping multiplexing.");
                     return CompletableFuture.completedFuture(null);
                 }
 
-                log.info("Found {} recipients for event.", recipients.size());
+                final var eventData = event.getData();
+                final var dataContentType = event.getDataContentType();
+                final var messagePublishingTasks = new ArrayList<CompletableFuture<SendResult<String, String>>>(subscriptionResources.size());
+                final var eventJsonPayload = eventData != null && (dataContentType == null || jsonMediaTypeRegex.matcher(dataContentType.trim()).matches()) ?
+                        parseEventData(eventData)
+                        : null;
+                for (var subscriptionResource : subscriptionResources) {
+                    final var subscription = subscriptionResource.getSpec().getSubscription();
+                    final var subscriptionId = subscription.getSubscriptionId();
+                    if (deDuplicationService.isDuplicate(publishedEventMessage, subscriptionId)) {
+                        continue;
+                    }
 
-                //Apply response- and selection-filter
-                log.info("Applying filters.");
-                Map<String, FilterEventMessageWrapper> filteredEventMessagesPerRecipient = getFilteredEventMessagesPerRecipient(recipients, galaxyConfig);
+                    log.info("Applying filters.");
+                    final var filteredEventMessage = getFilteredEventMessage(subscription, eventJsonPayload, galaxyConfig);
 
-                //Create subscriptionEventMessages for all recipients
-                Map<String, SubscriptionEventMessage> subscriptionEventMessagesMap;
-                try {
-                    subscriptionEventMessagesMap = createSubscriptionEventMessages(recipients, filteredEventMessagesPerRecipient, publishedEventMessage);
-                } catch (Exception e) {
-                    log.error("An unknown error occurred while handling event.", e);
+                    log.info("Creating SubscriptionEventMessage for subscription {}", subscriptionId);
+                    final var subscriptionEventMessage = createSubscriptionEventMessage(filteredEventMessage, event, subscription);
 
-                    //We should send these events to a dead-letter-topic in future
-                    return CompletableFuture.completedFuture(null);
+                    log.info("Sending SubscriptionEventMessage for subscription {}.", subscriptionId);
+                    final var messagePublishingTask = sendMessageToKafka(subscriptionEventMessage, filteredEventMessage);
+                    messagePublishingTasks.add(messagePublishingTask);
                 }
 
-                //Send to Kafka
-                return sendMessagesToKafka(subscriptionEventMessagesMap, filteredEventMessagesPerRecipient);
+                return CompletableFuture.allOf(messagePublishingTasks.toArray(new CompletableFuture[0]));
             }
         } finally {
             span.finish();
         }
     }
 
-    /**
-     * Sends messages to Kafka for each {@link SubscriptionEventMessage}.
-     *
-     * @param subscriptionEventMessagesMap       A map of SubscriptionId to {@link SubscriptionEventMessage}.
-     * @param filteredEventMessagesPerRecipient  A map of SubscriptionId to {@link FilterEventMessageWrapper}.
-     * @return A list of CompletableFutures representing the asynchronous sending of messages to kafka.
-     */
-    private CompletableFuture<Void> sendMessagesToKafka(
-            Map<String, SubscriptionEventMessage> subscriptionEventMessagesMap,
-            Map<String, FilterEventMessageWrapper> filteredEventMessagesPerRecipient
-    ) {
-        var messagePublishingTasks = new ArrayList<CompletableFuture<SendResult<String,String>>>(subscriptionEventMessagesMap.size());
-        for (var entry : subscriptionEventMessagesMap.entrySet()) {
-            log.info("Sending SubscriptionEventMessage for subscription {}.", entry.getKey());
-            try {
-                messagePublishingTasks.add(sendMessageToKafka(entry.getValue(), filteredEventMessagesPerRecipient));
-            } catch (Exception e) {
-                return CompletableFuture.failedFuture(e);
-            }
-        }
+    // should probably be part of the parent library, as a copy-constructor
+    private Event copyEvent(final Event originalEvent, final Object data) {
+        final var copy = new Event();
+        copy.setId(originalEvent.getId());
+        copy.setType(originalEvent.getType());
+        copy.setSource(originalEvent.getSource());
+        copy.setSpecVersion(originalEvent.getSpecVersion());
+        copy.setDataContentType(originalEvent.getDataContentType());
+        copy.setDataRef(originalEvent.getDataRef());
+        copy.setTime(originalEvent.getTime());
+        copy.setData(data);
 
-        return CompletableFuture.allOf(messagePublishingTasks.toArray(new CompletableFuture[0]));
+        return copy;
     }
 
-    /**
-     * Sends either an {@link SubscriptionEventMessage} or an ({@link Status#FAILED}|{@link Status#DROPPED} {@link StatusMessage} in a new Task to Kafka for the given {@link SubscriptionEventMessage}.
-     *
-     * @param subscriptionEventMessage          The SubscriptionEventMessage to send.
-     * @param filteredEventMessagesPerRecipient A map of SubscriptionId to {@link FilterEventMessageWrapper}.
-     * @return CompletableFuture                Tracks the status of the async publishing of the message
-     */
     private CompletableFuture<SendResult<String, String>> sendMessageToKafka(
-            SubscriptionEventMessage subscriptionEventMessage,
-            Map<String, FilterEventMessageWrapper> filteredEventMessagesPerRecipient
-    ) throws Exception {
-        final Callable<CompletableFuture<SendResult<String, String>>> sendMessage = () -> {
+            final SubscriptionEventMessage subscriptionEventMessage,
+            final FilterEventMessageWrapper filteredEventMessage
+    ) {
+        final Callable<CompletableFuture<SendResult<String, String>>> sendMessageTask = () -> {
+            final var subscriptionId = subscriptionEventMessage.getSubscriptionId();
             var multiplexSpan = tracer.startScopedSpan("multiplex message");
-
-            var subscriptionId = subscriptionEventMessage.getSubscriptionId();
-            var subscriptionFilter = filteredEventMessagesPerRecipient.get(subscriptionId);
-
             recordOutgoingPayloadSize(subscriptionEventMessage);
-            enrichTracing(multiplexSpan, subscriptionEventMessage, subscriptionFilter);
+            enrichTracing(multiplexSpan, subscriptionEventMessage, filteredEventMessage);
 
             CompletableFuture<SendResult<String, String>> result;
             try {
-                result = sendOutgoingMessage(subscriptionFilter, subscriptionEventMessage);
+                result = sendOutgoingMessage(filteredEventMessage, subscriptionEventMessage);
                 log.info("Successfully sent SubscriptionEventMessage for subscription {}.", subscriptionId);
                 trackEventForDeduplication(subscriptionEventMessage);
             } catch (JsonProcessingException e) {
@@ -191,7 +177,11 @@ public class PublishedMessageTask implements Callable<CompletableFuture<Void>> {
             return result;
         };
 
-        return tracer.withCurrentContext(sendMessage).call();
+        try {
+            return tracer.withCurrentContext(sendMessageTask).call();
+        } catch (Exception e) {
+            return CompletableFuture.failedFuture(e);
+        }
     }
 
     /**
@@ -199,7 +189,7 @@ public class PublishedMessageTask implements Callable<CompletableFuture<Void>> {
      * Therefore, if a previous {@link PublishedMessageTask} should finish unsuccessfully the {@link SubscriptionEventMessage}
      * will not be created again (which is intended).
      *
-     * @param subscriptionEventMessage  The {@link SubscriptionEventMessage} containing {@link PublishedEventMessage} UUID and SubscriptionId
+     * @param subscriptionEventMessage The {@link SubscriptionEventMessage} containing {@link PublishedEventMessage} UUID and SubscriptionId
      */
     private void trackEventForDeduplication(SubscriptionEventMessage subscriptionEventMessage) {
         log.debug("Tracking SubscriptionEventMessage in deduplication cache for subscription {}.", subscriptionEventMessage.getSubscriptionId());
@@ -248,9 +238,9 @@ public class PublishedMessageTask implements Callable<CompletableFuture<Void>> {
      * Adds additional tracing tags such as multiplexed-from, subscriber-id, the result
      * of the selection filter, and filter traceback to the multiplexSpan.
      *
-     * @param multiplexSpan             The span in which this method will add additional tracing info.
-     * @param subscriptionEventMessage  The message whose delivery was unsuccessful.
-     * @param subscriptionFilter Contains information about the filter applied on the message for the subscription.
+     * @param multiplexSpan            The span in which this method will add additional tracing info.
+     * @param subscriptionEventMessage The message whose delivery was unsuccessful.
+     * @param subscriptionFilter       Contains information about the filter applied on the message for the subscription.
      */
     private void enrichTracing(ScopedSpan multiplexSpan, SubscriptionEventMessage subscriptionEventMessage, FilterEventMessageWrapper subscriptionFilter) {
         multiplexSpan.tag(Constants.MULTIPLEXED_FROM, publishedEventMessage.getUuid());
@@ -309,61 +299,13 @@ public class PublishedMessageTask implements Callable<CompletableFuture<Void>> {
         return eventWriter.send(Objects.requireNonNullElse(subscriptionEventMessage.getEventRetentionTime(), EventRetentionTime.DEFAULT).getTopic(), outgoingMessage, tracer);
     }
 
-    /**
-     * Filters event messages for each recipient according to predefined criteria.
-     * <p>
-     * This method applies filters to the payload of event messages based on the recipients'
-     * preferences defined in the {@link SubscriptionResource}. The filtering process might
-     * remove parts of the payload or transforms it.
-     *
-     * @param recipients a collection containing the {@link SubscriptionResource} for each recipient
-     * @return a Map where the key is the SubscriptionId and the value is the filtered event message
-     * @see FilterEventMessageWrapper
-     */
-    @NotNull
-    private Map<String, FilterEventMessageWrapper> getFilteredEventMessagesPerRecipient(List<SubscriptionResource> recipients, GalaxyConfig galaxyConfig) {
+    private FilterEventMessageWrapper getFilteredEventMessage(final Subscription subscription, final JsonNode eventJsonPayload, final GalaxyConfig galaxyConfig) {
         var filterSpan = tracer.startScopedDebugSpan("apply filters");
-        Map<String, FilterEventMessageWrapper> filteredEventMessagesPerRecipient = new HashMap<>();
         try {
-            Object eventData = publishedEventMessage.getEvent().getData();
-            JsonNode jsonEventDataOrNull = null;
-
-            var dataContentType = publishedEventMessage.getEvent().getDataContentType();
-            var jsonMediaTypeRegexPattern = Pattern.compile("^application/(?:[a-zA-Z0-9]+\\+)?json.*", Pattern.CASE_INSENSITIVE);
-
-            if (eventData != null && (dataContentType == null || jsonMediaTypeRegexPattern.matcher(dataContentType.trim()).matches())) {
-                jsonEventDataOrNull = parseEventData(eventData);
-            }
-
-            filteredEventMessagesPerRecipient = Filters.filterDataForRecipients(recipients, jsonEventDataOrNull, galaxyConfig);
+            return Filters.filterDataForRecipient(subscription, eventJsonPayload, galaxyConfig);
         } finally {
             filterSpan.finish();
         }
-        return filteredEventMessagesPerRecipient;
-    }
-
-    /**
-     * Retrieves a list of recipients {@link SubscriptionResource} for a given {@link PublishedEventMessage}.
-     * <p>
-     * This method queries the {@link SubscriberCache} to obtain subscriptions associated with the specified environment and event type in the given {@link PublishedEventMessage}.
-     * It then filters the subscriptions to exclude duplicates based on the published event message UUID and the SubscriptionId.
-     * The resulting list represents unique recipients where the message has not been multiplexed yet.
-     *
-     * @param publishedEventMessage The {@link PublishedEventMessage} for which recipients are to be retrieved.
-     * @return A list of {@link SubscriptionResource} objects representing the recipients for the given event message.
-     *         If no matching subscriptions are found, an empty list is returned.
-     *
-     * @throws NullPointerException if the provided PublishedEventMessage is null.
-     * @see DeDuplicationService
-     */
-    private List<SubscriptionResource> getRecipientsForPublishedEventMessage(PublishedEventMessage publishedEventMessage) {
-        String eventType = publishedEventMessage.getEvent().getType();
-        var subscriptionsForEnvironmentAndType = subscriptionCache.getSubscriptionsForEnvironmentAndEventType(publishedEventMessage.getEnvironment(), eventType);
-        return subscriptionsForEnvironmentAndType != null ?
-                subscriptionsForEnvironmentAndType.stream()
-                        .filter(subscriptionResource -> !deDuplicationService.isDuplicate(publishedEventMessage, subscriptionResource.getSpec().getSubscription().getSubscriptionId()))
-                        .toList() :
-                Collections.emptyList();
     }
 
     /**
@@ -394,77 +336,55 @@ public class PublishedMessageTask implements Callable<CompletableFuture<Void>> {
         return jsonEventData;
     }
 
-    /**
-     * Creates {@link SubscriptionEventMessage} instances for each recipient.
-     * <p>
-     * This method iterates through the list of recipients and creates a {@link SubscriptionEventMessage} for each.
-     * It copies the original event, applies filtered data if a response filter was used, sets the additional fields,
-     * and constructs the {@link SubscriptionEventMessage} with the delivery type, SubscriberId,
-     * callbackUrl, and custom headers.
-     *
-     * @param recipients                         A list of {@link SubscriptionResource} objects representing the recipients for the event message.
-     * @param filteredEventDataPerSubscriptionId A map filtered event data.
-     * @param publishedEventMessage              The {@link PublishedEventMessage} for which {@link SubscriptionEventMessage}s are to be created of.
-     * @return A map where the key is the SubscriptionId, and the value is the corresponding {@link SubscriptionEventMessage} for each recipient.
-     *
-     * @see FilterEventMessageWrapper
-     */
-    private Map<String, SubscriptionEventMessage> createSubscriptionEventMessages(List<SubscriptionResource> recipients, Map<String, FilterEventMessageWrapper> filteredEventDataPerSubscriptionId, PublishedEventMessage publishedEventMessage) throws Exception {
-        var subscriptionEventMessagesPerSubscriptionId = new HashMap<String, SubscriptionEventMessage>();
+    private SubscriptionEventMessage createSubscriptionEventMessage(
+            final FilterEventMessageWrapper filteredEventMessage,
+            final Event event,
+            final Subscription subscription
+    ) {
+        final var subscriptionId = subscription.getSubscriptionId();
+        final var multiplexedEvent = filteredEventMessage.getEvaluationResultStatus() == EvaluationResultStatus.MATCH
+                ? copyEvent(event, filteredEventMessage.getFilteredPayload())
+                : event;
 
-        for (SubscriptionResource recipient : recipients) {
-            log.info("Creating SubscriptionEventMessage for subscription {}", recipient.getSpec().getSubscription().getSubscriptionId());
-
-            //Create EventCopy
-            Event eventCopy;
-            try {
-                eventCopy = objectMapper.readValue(objectMapper.writeValueAsString(publishedEventMessage.getEvent()), Event.class);
-            } catch (Exception e) {
-                throw new Exception(e.getMessage());
-            }
-
-            //If response filter was applied use stripped data
-            String subscriptionId = recipient.getSpec().getSubscription().getSubscriptionId();
-            var evaluationStatus = filteredEventDataPerSubscriptionId.get(subscriptionId).getEvaluationResultStatus();
-
-            if (evaluationStatus == EvaluationResultStatus.MATCH) {
-                eventCopy.setData(filteredEventDataPerSubscriptionId.get(subscriptionId).getFilteredPayload());
-            }
-
-            var deliveryType = DeliveryType.valueOf(recipient.getSpec().getSubscription().getDeliveryType().toUpperCase());
-
-            Map<String, Object> additionalFields = new HashMap<>();
-            if (publishedEventMessage.getAdditionalFields() != null) {
-                additionalFields.putAll(publishedEventMessage.getAdditionalFields());
-            }
-
-            var httpHeaders = new HashMap<String, List<String>>();
-            if (publishedEventMessage.getHttpHeaders() != null) {
-                httpHeaders.putAll(publishedEventMessage.getHttpHeaders());
-            }
-
-            var subscriberId = recipient.getSpec().getSubscription().getSubscriberId();
-            additionalFields.put("subscriber-id", subscriberId);
-
-            if (deliveryType.equals(DeliveryType.CALLBACK)) {
-                additionalFields.put("callback-url", recipient.getSpec().getSubscription().getCallback());
-
-                httpHeaders.put(HeaderConstants.X_EVENT_ID, List.of(eventCopy.getId()));
-                httpHeaders.put(HeaderConstants.X_EVENT_TYPE, List.of(eventCopy.getType()));
-                httpHeaders.put(HeaderConstants.X_PUBSUB_PUBLISHER_ID, List.of(recipient.getSpec().getSubscription().getPublisherId()));
-                httpHeaders.put(HeaderConstants.X_PUBSUB_SUBSCRIBER_ID, List.of(subscriberId));
-                httpHeaders.put(HeaderConstants.X_SUBSCRIPTION_ID, List.of(subscriptionId));
-            }
-
-            var retentionTimeStrOrNull = recipient.getSpec().getSubscription().getEventRetentionTime();
-            var eventRetentionTime = Objects.nonNull(retentionTimeStrOrNull) ? EventRetentionTime.fromString(retentionTimeStrOrNull.toUpperCase()) : EventRetentionTime.DEFAULT;
-
-            //Event event, String environment, DeliveryType deliveryType, String subscriptionId, String multiplexedFrom, EventRetentionTime eventRetentionTime, List<String> appliedScopes, Map<String, Object> additionalFields, Map<String, List<String>> httpHeaders
-            var subscriptionEventMessage = new SubscriptionEventMessage(eventCopy, publishedEventMessage.getEnvironment(), deliveryType, subscriptionId, publishedEventMessage.getUuid(), eventRetentionTime, recipient.getSpec().getSubscription().getAppliedScopes(), additionalFields, httpHeaders);
-            subscriptionEventMessagesPerSubscriptionId.put(subscriptionId, subscriptionEventMessage);
+        final var deliveryType = DeliveryType.valueOf(subscription.getDeliveryType().toUpperCase());
+        Map<String, Object> additionalFields = new HashMap<>();
+        if (publishedEventMessage.getAdditionalFields() != null) {
+            additionalFields.putAll(publishedEventMessage.getAdditionalFields());
         }
 
-        return subscriptionEventMessagesPerSubscriptionId;
-    }
+        final var httpHeaders = new HashMap<String, List<String>>();
+        if (publishedEventMessage.getHttpHeaders() != null) {
+            httpHeaders.putAll(publishedEventMessage.getHttpHeaders());
+        }
 
+        final var subscriberId = subscription.getSubscriberId();
+        additionalFields.put("subscriber-id", subscriberId);
+
+        if (deliveryType.equals(DeliveryType.CALLBACK)) {
+            additionalFields.put("callback-url", subscription.getCallback());
+
+            httpHeaders.put(HeaderConstants.X_EVENT_ID, List.of(multiplexedEvent.getId()));
+            httpHeaders.put(HeaderConstants.X_EVENT_TYPE, List.of(multiplexedEvent.getType()));
+            httpHeaders.put(HeaderConstants.X_PUBSUB_PUBLISHER_ID, List.of(subscription.getPublisherId()));
+            httpHeaders.put(HeaderConstants.X_PUBSUB_SUBSCRIBER_ID, List.of(subscriberId));
+            httpHeaders.put(HeaderConstants.X_SUBSCRIPTION_ID, List.of(subscriptionId));
+        }
+
+        final var retentionTimeStrOrNull = subscription.getEventRetentionTime();
+        final var eventRetentionTime = Objects.nonNull(retentionTimeStrOrNull)
+                ? EventRetentionTime.fromString(retentionTimeStrOrNull.toUpperCase())
+                : EventRetentionTime.DEFAULT;
+
+        return new SubscriptionEventMessage(
+                multiplexedEvent,
+                publishedEventMessage.getEnvironment(),
+                deliveryType,
+                subscriptionId,
+                publishedEventMessage.getUuid(),
+                eventRetentionTime,
+                subscription.getAppliedScopes(),
+                additionalFields,
+                httpHeaders
+        );
+    }
 }
