@@ -84,8 +84,8 @@ public class PublishedMessageTask implements Callable<CompletableFuture<Void>> {
                 publishedEventMessage = objectMapper.readValue(consumerRecord.value(), PublishedEventMessage.class);
             } catch (JsonProcessingException e) {
                 log.error("JsonProcessingException occurred while parsing published event message with key {}!", consumerRecord.key(), e);
-                return CompletableFuture.completedFuture(null);
                 // Better to move to DLQ for messages that are not parseable
+                return CompletableFuture.completedFuture(null);
             }
 
             try(
