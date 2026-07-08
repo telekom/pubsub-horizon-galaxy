@@ -17,6 +17,8 @@ import java.util.List;
 @Getter
 @Setter
 public class GalaxyConfig {
+    private long nackSleepDurationMs;
+
     private String defaultEnvironment;
 
     @Value("${horizon.kafka.consumingTopic}")

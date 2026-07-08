@@ -6,6 +6,7 @@ package de.telekom.horizon.galaxy.kafka;
 
 import de.telekom.eni.pandora.horizon.model.event.PublishedEventMessage;
 import de.telekom.eni.pandora.horizon.tracing.HorizonTracer;
+import de.telekom.horizon.galaxy.config.GalaxyConfig;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import lombok.extern.slf4j.Slf4j;
@@ -18,10 +19,9 @@ import org.springframework.kafka.support.Acknowledgment;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.Callable;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutionException;
+import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Function;
 
 /**
  * The {@code PublishedMessageListener} class is responsible for processing Kafka messages in batches.
@@ -34,16 +34,24 @@ import java.util.concurrent.atomic.AtomicInteger;
  */
 @Slf4j
 public class PublishedMessageListener extends AbstractConsumerSeekAware implements BatchAcknowledgingMessageListener<String, String> {
-    private static final Duration KAFKA_NACK_SLEEP = Duration.ofMillis(5000);
     private static final int NO_NACK_INDEX = -1;
+    private static final int PARALLELISM = 3;
 
     private final PublishedMessageTaskFactory publishedMessageTaskFactory;
+    private final Duration kafkaNackSleepDuration;
     private final HorizonTracer tracer;
     private final Counter nackCounter;
     private final Counter nackDueToTaskFailureCounter;
+    private final ExecutorService executorService;
 
-    public PublishedMessageListener(PublishedMessageTaskFactory publishedMessageTaskFactory, HorizonTracer horizonTracer, MeterRegistry meterRegistry) {
+    public PublishedMessageListener(
+            PublishedMessageTaskFactory publishedMessageTaskFactory,
+            HorizonTracer horizonTracer,
+            GalaxyConfig galaxyConfig,
+            MeterRegistry meterRegistry
+    ) {
         super();
+        this.kafkaNackSleepDuration = Duration.ofMillis(galaxyConfig.getNackSleepDurationMs());
         this.publishedMessageTaskFactory = publishedMessageTaskFactory;
         this.tracer = horizonTracer;
 
@@ -53,6 +61,8 @@ public class PublishedMessageListener extends AbstractConsumerSeekAware implemen
         this.nackDueToTaskFailureCounter = Counter.builder("pubsub.kafka.listener.nacks.task_failure")
                 .description("Nacks due to task execution failure")
                 .register(meterRegistry);
+
+        this.executorService = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors() * PARALLELISM);
     }
 
     /**
@@ -83,20 +93,22 @@ public class PublishedMessageListener extends AbstractConsumerSeekAware implemen
             final var task = newPublishedMessageTaskWithTrace(consumerRecord);
             final var messageInBatchIndex = i;
 
-            try {
-                messagePublishingStatuses.add(task
-                        .call()
-                        .exceptionally(ex -> {
-                            updateFailedIndex(failedIndex, messageInBatchIndex);
-                            nackDueToTaskFailureCounter.increment();
-                            return null;
-                        }));
-            } catch (Exception e) {
-                // we continue processing other messages in batch
-                log.error("Unexpected error processing event task", e);
-                updateFailedIndex(failedIndex, messageInBatchIndex);
-                nackDueToTaskFailureCounter.increment();
-            }
+            messagePublishingStatuses.add(
+                    CompletableFuture.supplyAsync(() -> {
+                                try {
+                                    return task.call();
+                                } catch (Exception e) {
+                                    throw new CompletionException(e);
+                                }
+                            }, executorService)
+                            .thenCompose(Function.identity())
+                            .exceptionally(ex -> {
+                                log.warn("Unexpected exception in message publishing task", ex);
+                                updateFailedIndex(failedIndex, messageInBatchIndex);
+                                nackDueToTaskFailureCounter.increment();
+                                return null;
+                            }));
+
         }
 
         try {
@@ -106,7 +118,7 @@ public class PublishedMessageListener extends AbstractConsumerSeekAware implemen
 
             final var failedIndexValue = failedIndex.get();
             if (failedIndexValue != NO_NACK_INDEX) {
-                acknowledgment.nack(failedIndexValue, KAFKA_NACK_SLEEP);
+                acknowledgment.nack(failedIndexValue, kafkaNackSleepDuration);
                 nackCounter.increment();
                 return;
             }
@@ -128,12 +140,11 @@ public class PublishedMessageListener extends AbstractConsumerSeekAware implemen
             if (oldIndex == NO_NACK_INDEX) {
                 return newIndex;
             }
-            return Math.min(currentIndex, newIndex);
+            return Math.min(oldIndex, newIndex);
         });
     }
 
     private Callable<CompletableFuture<Void>> newPublishedMessageTaskWithTrace(ConsumerRecord<String, String> consumerRecord) {
         return tracer.withCurrentContext(publishedMessageTaskFactory.newTask(consumerRecord));
     }
-
 }

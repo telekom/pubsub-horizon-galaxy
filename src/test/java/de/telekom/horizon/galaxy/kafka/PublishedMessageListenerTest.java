@@ -5,6 +5,7 @@
 package de.telekom.horizon.galaxy.kafka;
 
 import de.telekom.eni.pandora.horizon.tracing.HorizonTracer;
+import de.telekom.horizon.galaxy.config.GalaxyConfig;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.junit.jupiter.api.BeforeEach;
@@ -23,6 +24,7 @@ class PublishedMessageListenerTest {
 
     private PublishedMessageTaskFactory factory;
     private HorizonTracer tracer;
+    private GalaxyConfig galaxyConfig;
     private SimpleMeterRegistry meterRegistry;
     private Acknowledgment acknowledgment;
     private PublishedMessageListener listener;
@@ -31,13 +33,15 @@ class PublishedMessageListenerTest {
     void setUp() {
         factory = mock(PublishedMessageTaskFactory.class);
         tracer = mock(HorizonTracer.class);
+        galaxyConfig = new GalaxyConfig();
+        galaxyConfig.setNackSleepDurationMs(1000);
         meterRegistry = new SimpleMeterRegistry();
         acknowledgment = mock(Acknowledgment.class);
 
         // Make tracer.withCurrentTraceContext pass through the callable
         when(tracer.<CompletableFuture<Void>>withCurrentContext(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
-        listener = new PublishedMessageListener(factory, tracer, meterRegistry);
+        listener = new PublishedMessageListener(factory, tracer, galaxyConfig, meterRegistry);
     }
 
     @Test
@@ -68,7 +72,7 @@ class PublishedMessageListenerTest {
 
     @Test
     void onMessageShouldNackAtEarliestFailureWhenBothRejectionAndTaskFailure() {
-        var smallPoolListener = new PublishedMessageListener(factory, tracer, meterRegistry);
+        var smallPoolListener = new PublishedMessageListener(factory, tracer, galaxyConfig, meterRegistry);
 
         // First task fails, second gets rejected
         var failingTask = mock(PublishedMessageTask.class);

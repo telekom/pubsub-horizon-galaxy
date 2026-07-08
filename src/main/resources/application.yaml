@@ -49,6 +49,7 @@ pandora:
     name: horizon
 
 galaxy:
+  nack-sleep-duration-ms: ${GALAXY_NACK_SLEEP_DURATION_MS:5000}
   default-environment: ${GALAXY_DEFAULT_ENVIRONMENT:default}
   feature-jsonpath-filtering-enabled: ${GALAXY_FEATURE_JSONPATH_FILTERING_ENABLED:false}
   feature-jsonpath-filtering-event-types: ${GALAXY_FEATURE_JSONPATH_FILTERING_EVENT_TYPES:}
