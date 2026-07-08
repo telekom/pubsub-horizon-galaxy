@@ -1,0 +1,31 @@
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+#
+# SPDX-License-Identifier: Apache-2.0
+
+name: CI
+
+on:
+  push:
+
+jobs:
+  build:
+    permissions:
+      contents: read
+      pull-requests: write
+    uses: telekom/pubsub-horizon-ci/.github/workflows/gradle-build.yml@main
+    with:
+      java-version: "21"
+
+  reuse:
+    uses: telekom/pubsub-horizon-ci/.github/workflows/reuse-compliance.yml@main
+
+  publish:
+    needs: [build]
+    uses: telekom/pubsub-horizon-ci/.github/workflows/docker-publish.yml@main
+    with:
+      component: starlight
+      language: java
+      build-args: "DOCKER_BASE_IMAGE=artifactory.devops.telekom.de/tardis-oci-local/tardis/infra/build/pandora-java-21:1.0.0"
+    secrets:
+      REGISTRY_USERNAME: ${{ secrets.ARTIFACTORY_O28M_PUSH_USER }}
+      REGISTRY_PASSWORD: ${{ secrets.ARTIFACTORY_O28M_PUSH_TOKEN }}
