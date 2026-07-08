@@ -23,7 +23,7 @@ jobs:
     needs: [build]
     uses: telekom/pubsub-horizon-ci/.github/workflows/docker-publish.yml@main
     with:
-      component: starlight
+      component: galaxy
       language: java
       build-args: "DOCKER_BASE_IMAGE=artifactory.devops.telekom.de/tardis-oci-local/tardis/infra/build/pandora-java-21:1.0.0"
     secrets:
