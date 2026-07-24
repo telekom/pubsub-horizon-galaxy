@@ -5,6 +5,8 @@
 ARG DOCKER_BASE_IMAGE=azul/zulu-openjdk-alpine:21-jre
 FROM ${DOCKER_BASE_IMAGE}
 
+RUN dnf install -y gcc perf glibc-devel kernel-headers
+
 WORKDIR app
 
 COPY build/libs/galaxy.jar app.jar
