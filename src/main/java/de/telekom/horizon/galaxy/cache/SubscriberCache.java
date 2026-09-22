@@ -4,16 +4,15 @@
 
 package de.telekom.horizon.galaxy.cache;
 
-import de.telekom.eni.pandora.horizon.cache.service.JsonCacheService;
-import de.telekom.eni.pandora.horizon.cache.util.Query;
-import de.telekom.eni.pandora.horizon.exception.JsonCacheException;
+import de.telekom.eni.pandora.horizon.cache.service.SubscriptionCacheReader;
+import de.telekom.eni.pandora.horizon.exception.SubscriptionCacheReadException;
 import de.telekom.eni.pandora.horizon.kubernetes.resource.SubscriptionResource;
 import de.telekom.horizon.galaxy.config.GalaxyConfig;
 import de.telekom.horizon.galaxy.model.SubscriptionCacheKey;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
 
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 
@@ -28,11 +27,13 @@ public class SubscriberCache {
 
     private final SubscriptionCountGaugeCache subscriptionCountGaugeCache;
 
-    private final JsonCacheService<SubscriptionResource> subscriptionCache;
+    private final SubscriptionCacheReader subscriptionCache;
 
     private final GalaxyConfig galaxyConfig;
 
-    public SubscriberCache(SubscriptionCountGaugeCache subscriptionCountGaugeCache, JsonCacheService<SubscriptionResource> subscriptionCache, GalaxyConfig galaxyConfig) {
+    public SubscriberCache(SubscriptionCountGaugeCache subscriptionCountGaugeCache,
+                           @Qualifier("subscriptionCacheReader") SubscriptionCacheReader subscriptionCache,
+                           GalaxyConfig galaxyConfig) {
         this.subscriptionCountGaugeCache = subscriptionCountGaugeCache;
         this.subscriptionCache = subscriptionCache;
         this.galaxyConfig = galaxyConfig;
@@ -48,7 +49,7 @@ public class SubscriberCache {
      * @param environment   The environment to gather subscriptions from.
      * @param eventType     The type of event for the subscriptions.
      * @return A  where the keys are the SubscriptionIds and the values are the corresponding {@link SubscriptionResource}.
-     * If no such subscriptions exist for the given environment and event type, this method may return <strong>null</strong>.
+    * If no such subscriptions exist for the given environment and event type, this method returns an empty list.
      */
     public List<SubscriptionResource> getSubscriptionsForEnvironmentAndEventType(String environment, String eventType) {
 
@@ -57,17 +58,11 @@ public class SubscriberCache {
             env = "default";
         }
 
-        var builder = Query.builder(SubscriptionResource.class)
-                .addMatcher("spec.environment", env)
-                .addMatcher("spec.subscription.type", eventType);
-
-        List<SubscriptionResource> list = new ArrayList<>();
         try {
-            list = subscriptionCache.getQuery(builder.build());
-
-        } catch (JsonCacheException e) {
-            log.error("Error occurred while executing query on JsonCacheService", e);
+            return subscriptionCache.findByEnvironmentAndEventType(env, eventType);
+        } catch (SubscriptionCacheReadException exception) {
+            log.error("Error occurred while reading subscriptions from SubscriptionCacheReader", exception);
+            return List.of();
         }
-        return list;
     }
 }

@@ -37,6 +37,7 @@ group = 'de.telekom.horizon'
 version = getVersion()
 
 repositories {
+    mavenLocal()
     mavenCentral()
 }
 
