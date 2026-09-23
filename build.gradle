@@ -37,8 +37,13 @@ group = 'de.telekom.horizon'
 version = getVersion()
 
 repositories {
-    mavenLocal()
     mavenCentral()
+    maven {
+        url = uri('https://central.sonatype.com/repository/maven-snapshots/')
+        mavenContent {
+            snapshotsOnly()
+        }
+    }
 }
 
 ext['tomcat.version'] = '10.1.60'
