@@ -8,12 +8,4 @@ pluginManagement {
 	}
 }
 
-includeBuild('../pubsub-horizon-spring-parent') {
-	dependencySubstitution {
-		substitute module('de.telekom.eni:horizon-core') using project(':horizon-core')
-		substitute module('de.telekom.eni:horizon-spring-boot-autoconfigure') using project(':horizon-spring-boot-autoconfigure')
-		substitute module('de.telekom.eni:horizon-spring-boot-starter') using project(':horizon-spring-boot-starter')
-	}
-}
-
 rootProject.name = 'galaxy'
