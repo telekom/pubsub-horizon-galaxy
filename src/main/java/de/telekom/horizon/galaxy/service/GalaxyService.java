@@ -4,8 +4,8 @@
 
 package de.telekom.horizon.galaxy.service;
 
-import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.boot.SpringApplication;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.event.EventListener;
@@ -27,9 +27,9 @@ public class GalaxyService {
         this.context = context;
     }
 
-    @PostConstruct
-    public void init() {
-        if (messageListenerContainer != null) {
+    @EventListener(ApplicationReadyEvent.class)
+    public void applicationReadyHandler() {
+        if (messageListenerContainer != null && !messageListenerContainer.isRunning()) {
             messageListenerContainer.start();
 
             log.info("ConcurrentMessageListenerContainer started.");
