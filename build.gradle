@@ -78,8 +78,7 @@ java {
 
 test {
     useJUnitPlatform()
-    systemProperty 'horizon.cache.local-subscription-cache.zoo-keeper.enabled', 'false'
-    systemProperty 'horizon.cache.local-subscription-cache.require-local-cache-at-startup', 'false'
+    systemProperty 'horizon.cache.local-subscription-cache.enabled', 'false'
     finalizedBy jacocoTestReport
 }
 

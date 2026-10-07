@@ -5,6 +5,7 @@
 package de.telekom.horizon.galaxy.kafka;
 
 import de.telekom.eni.pandora.horizon.tracing.HorizonTracer;
+import de.telekom.horizon.galaxy.cache.SubscriptionLookupException;
 import de.telekom.horizon.galaxy.config.GalaxyConfig;
 import de.telekom.horizon.galaxy.model.PublishedMessageTaskResult;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -67,6 +68,20 @@ class PublishedMessageListenerTest {
         var task = mock(PublishedMessageTask.class);
         when(factory.newTask(any())).thenReturn(task);
         when(task.call()).thenReturn(new PublishedMessageTaskResult(false));
+
+        listener.onMessage(List.of(record), acknowledgment);
+
+        verify(acknowledgment, never()).acknowledge();
+        verify(acknowledgment).nack(eq(0), any(Duration.class));
+    }
+
+    @Test
+    void onMessageShouldNackOnSubscriptionLookupException() {
+        var record = new ConsumerRecord<>("topic", 0, 0L, "key", "value");
+        var task = mock(PublishedMessageTask.class);
+        when(factory.newTask(any())).thenReturn(task);
+        when(task.call()).thenThrow(new SubscriptionLookupException("lookup failed",
+                new IllegalStateException("Hazelcast operation timed out")));
 
         listener.onMessage(List.of(record), acknowledgment);
 

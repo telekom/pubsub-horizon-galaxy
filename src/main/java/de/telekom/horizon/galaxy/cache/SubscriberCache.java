@@ -5,6 +5,7 @@
 package de.telekom.horizon.galaxy.cache;
 
 import de.telekom.eni.pandora.horizon.cache.service.SubscriptionCacheReader;
+import de.telekom.eni.pandora.horizon.exception.JsonCacheException;
 import de.telekom.eni.pandora.horizon.exception.SubscriptionCacheReadException;
 import de.telekom.eni.pandora.horizon.kubernetes.resource.SubscriptionResource;
 import de.telekom.horizon.galaxy.config.GalaxyConfig;
@@ -49,7 +50,8 @@ public class SubscriberCache {
      * @param environment   The environment to gather subscriptions from.
      * @param eventType     The type of event for the subscriptions.
      * @return A  where the keys are the SubscriptionIds and the values are the corresponding {@link SubscriptionResource}.
-    * If no such subscriptions exist for the given environment and event type, this method returns an empty list.
+     * If no such subscriptions exist for the given environment and event type, this method returns an empty list.
+     * @throws SubscriptionLookupException if the subscriptions cannot be read; the event must be re-consumed
      */
     public List<SubscriptionResource> getSubscriptionsForEnvironmentAndEventType(String environment, String eventType) {
 
@@ -61,8 +63,15 @@ public class SubscriberCache {
         try {
             return subscriptionCache.findByEnvironmentAndEventType(env, eventType);
         } catch (SubscriptionCacheReadException exception) {
-            log.error("Error occurred while reading subscriptions from SubscriptionCacheReader", exception);
-            return List.of();
+            // Handle JSON mapping errors of fallback (JsonCacheException) as before; log and return an empty list
+            if (exception.getCause() instanceof JsonCacheException) {
+                log.error("Error occurred while executing query on JsonCacheService for environment {} and event type {}",
+                        env, eventType, exception);
+                return List.of();
+            }
+            // Otherwise nack the message by throwing an exception
+            throw new SubscriptionLookupException("Error occurred while reading subscriptions for environment "
+                    + env + " and event type " + eventType, exception);
         }
     }
 }

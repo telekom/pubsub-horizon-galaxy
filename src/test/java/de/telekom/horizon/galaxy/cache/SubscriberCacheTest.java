@@ -5,6 +5,7 @@
 package de.telekom.horizon.galaxy.cache;
 
 import de.telekom.eni.pandora.horizon.cache.service.SubscriptionCacheReader;
+import de.telekom.eni.pandora.horizon.exception.JsonCacheException;
 import de.telekom.eni.pandora.horizon.exception.SubscriptionCacheReadException;
 import de.telekom.eni.pandora.horizon.kubernetes.resource.SubscriptionResource;
 import de.telekom.horizon.galaxy.config.GalaxyConfig;
@@ -14,6 +15,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -46,12 +48,33 @@ class SubscriberCacheTest {
     }
 
     @Test
-    void shouldReturnEmptyListWhenSubscriptionCacheReadFails() throws SubscriptionCacheReadException {
+    void shouldThrowSubscriptionLookupExceptionWhenCacheReturnsNoResult() throws SubscriptionCacheReadException {
         when(subscriptionCache.findByEnvironmentAndEventType("production", "event-type"))
-                .thenThrow(new SubscriptionCacheReadException("cache unavailable"));
+                .thenThrow(new SubscriptionCacheReadException("Subscription cache returned no result"));
+
+        assertThrows(SubscriptionLookupException.class,
+                () -> subscriberCache.getSubscriptionsForEnvironmentAndEventType("production", "event-type"));
+    }
+
+    @Test
+    void shouldReturnEmptyListOnJsonCacheMappingError() throws SubscriptionCacheReadException {
+        when(subscriptionCache.findByEnvironmentAndEventType("production", "event-type"))
+                .thenThrow(new SubscriptionCacheReadException("mapping failed", new JsonCacheException("invalid json", null)));
 
         var result = subscriberCache.getSubscriptionsForEnvironmentAndEventType("production", "event-type");
 
         assertEquals(List.of(), result);
+    }
+
+    @Test
+    void shouldThrowSubscriptionLookupExceptionWhenCacheReadFails() throws SubscriptionCacheReadException {
+        var cause = new IllegalStateException("Hazelcast operation timed out");
+        when(subscriptionCache.findByEnvironmentAndEventType("production", "event-type"))
+                .thenThrow(new SubscriptionCacheReadException("read failed", cause));
+
+        var exception = assertThrows(SubscriptionLookupException.class,
+                () -> subscriberCache.getSubscriptionsForEnvironmentAndEventType("production", "event-type"));
+
+        assertSame(cause, exception.getCause().getCause());
     }
 }
