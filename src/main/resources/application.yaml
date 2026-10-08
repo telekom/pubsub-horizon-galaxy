@@ -39,7 +39,7 @@ horizon:
       snapshot-collection: ${GALAXY_CACHE_LOCAL_SUBSCRIPTION_CACHE_SNAPSHOT_COLLECTION:subscriptions.subscriber.horizon.telekom.de.v1-snapshots}
       head-collection: ${GALAXY_CACHE_LOCAL_SUBSCRIPTION_CACHE_HEAD_COLLECTION:subscriptions.subscriber.horizon.telekom.de.v1-head}
       stale-local-cache-read-grace-period: ${GALAXY_CACHE_LOCAL_SUBSCRIPTION_CACHE_STALE_LOCAL_CACHE_READ_GRACE_PERIOD:120s}
-      require-local-cache-at-startup: ${GALAXY_CACHE_LOCAL_SUBSCRIPTION_CACHE_REQUIRE_LOCAL_CACHE_AT_STARTUP:false}
+      require-local-cache-at-startup: ${GALAXY_CACHE_LOCAL_SUBSCRIPTION_CACHE_REQUIRE_LOCAL_CACHE_AT_STARTUP:true}
       initial-snapshot-timeout: ${GALAXY_CACHE_LOCAL_SUBSCRIPTION_CACHE_INITIAL_SNAPSHOT_TIMEOUT:15s}
       mongo-head-fallback-enabled: ${GALAXY_CACHE_LOCAL_SUBSCRIPTION_CACHE_MONGO_HEAD_FALLBACK_ENABLED:true}
       mongo-head-poll-jitter: ${GALAXY_CACHE_LOCAL_SUBSCRIPTION_CACHE_MONGO_HEAD_POLL_JITTER:10s}
