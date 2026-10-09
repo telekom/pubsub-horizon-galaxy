@@ -134,21 +134,6 @@ public class PublishedMessageTask implements Callable<CompletableFuture<Void>> {
         }
     }
 
-    // should probably be part of the parent library, as a copy-constructor
-    private Event copyEvent(final Event originalEvent, final Object data) {
-        final var copy = new Event();
-        copy.setId(originalEvent.getId());
-        copy.setType(originalEvent.getType());
-        copy.setSource(originalEvent.getSource());
-        copy.setSpecVersion(originalEvent.getSpecVersion());
-        copy.setDataContentType(originalEvent.getDataContentType());
-        copy.setDataRef(originalEvent.getDataRef());
-        copy.setTime(originalEvent.getTime());
-        copy.setData(data);
-
-        return copy;
-    }
-
     private CompletableFuture<SendResult<String, String>> sendMessageToKafka(
             final SubscriptionEventMessage subscriptionEventMessage,
             final FilterEventMessageWrapper filteredEventMessage
@@ -343,7 +328,7 @@ public class PublishedMessageTask implements Callable<CompletableFuture<Void>> {
     ) {
         final var subscriptionId = subscription.getSubscriptionId();
         final var multiplexedEvent = filteredEventMessage.getEvaluationResultStatus() == EvaluationResultStatus.MATCH
-                ? copyEvent(event, filteredEventMessage.getFilteredPayload())
+                ? event.withData(filteredEventMessage.getFilteredPayload())
                 : event;
 
         final var deliveryType = DeliveryType.valueOf(subscription.getDeliveryType().toUpperCase());
