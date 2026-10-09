@@ -37,16 +37,13 @@ horizon:
       enabled: ${GALAXY_CACHE_LOCAL_SUBSCRIPTION_CACHE_ENABLED:true}
       fallback-mode: ${GALAXY_CACHE_LOCAL_SUBSCRIPTION_CACHE_FALLBACK_MODE:hazelcast-with-mongo-fallback}
       snapshot-collection: ${GALAXY_CACHE_LOCAL_SUBSCRIPTION_CACHE_SNAPSHOT_COLLECTION:subscriptions.subscriber.horizon.telekom.de.v1-snapshots}
-      head-collection: ${GALAXY_CACHE_LOCAL_SUBSCRIPTION_CACHE_HEAD_COLLECTION:subscriptions.subscriber.horizon.telekom.de.v1-head}
       stale-local-cache-read-grace-period: ${GALAXY_CACHE_LOCAL_SUBSCRIPTION_CACHE_STALE_LOCAL_CACHE_READ_GRACE_PERIOD:120s}
       require-local-cache-at-startup: ${GALAXY_CACHE_LOCAL_SUBSCRIPTION_CACHE_REQUIRE_LOCAL_CACHE_AT_STARTUP:true}
       initial-snapshot-timeout: ${GALAXY_CACHE_LOCAL_SUBSCRIPTION_CACHE_INITIAL_SNAPSHOT_TIMEOUT:15s}
-      mongo-head-fallback-mode: ${GALAXY_CACHE_LOCAL_SUBSCRIPTION_CACHE_MONGO_HEAD_FALLBACK_MODE:startup-only}
       mongo-head-poll-jitter: ${GALAXY_CACHE_LOCAL_SUBSCRIPTION_CACHE_MONGO_HEAD_POLL_JITTER:10s}
       mongo-snapshot-sync-jitter: ${GALAXY_CACHE_LOCAL_SUBSCRIPTION_CACHE_MONGO_SNAPSHOT_SYNC_JITTER:10s}
       reconcile-interval: ${GALAXY_CACHE_LOCAL_SUBSCRIPTION_CACHE_RECONCILE_INTERVAL:60s}
       zoo-keeper:
-        enabled: ${GALAXY_CACHE_LOCAL_SUBSCRIPTION_CACHE_ZOO_KEEPER_ENABLED:true}
         ensemble-tracker-enabled: ${GALAXY_CACHE_LOCAL_SUBSCRIPTION_CACHE_ZOO_KEEPER_ENSEMBLE_TRACKER_ENABLED:true}
         connect-string: ${GALAXY_CACHE_LOCAL_SUBSCRIPTION_CACHE_ZOO_KEEPER_CONNECT_STRING:}
         prepared-path: ${GALAXY_CACHE_LOCAL_SUBSCRIPTION_CACHE_ZOO_KEEPER_PREPARED_PATH:/horizon/subscriptions/prepared}
