@@ -120,7 +120,13 @@ public class PublishedMessageTask implements Callable<CompletableFuture<Void>> {
                     final var filteredEventMessage = getFilteredEventMessage(subscription, eventJsonPayload, galaxyConfig);
 
                     log.info("Creating SubscriptionEventMessage for subscription {}", subscriptionId);
-                    final var subscriptionEventMessage = createSubscriptionEventMessage(filteredEventMessage, event, subscription);
+                    final SubscriptionEventMessage subscriptionEventMessage;
+                    try {
+                        subscriptionEventMessage  = createSubscriptionEventMessage(filteredEventMessage, event, subscription);
+                    }  catch (Exception e) {
+                        log.error("An unknown error occurred while handling event.", e);
+                        return CompletableFuture.completedFuture(null);
+                    }
 
                     log.info("Sending SubscriptionEventMessage for subscription {}.", subscriptionId);
                     final var messagePublishingTask = sendMessageToKafka(subscriptionEventMessage, filteredEventMessage);
