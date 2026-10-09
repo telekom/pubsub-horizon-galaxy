@@ -108,6 +108,7 @@ public class PublishedMessageListener extends AbstractConsumerSeekAware implemen
                                 }
                             }, executorService)
                             .thenCompose(Function.identity())
+                            .whenComplete((res, ex) -> span.finish())
                             .exceptionally(ex -> {
                                 log.warn("Unexpected exception in message publishing task", ex);
                                 updateFailedIndex(failedIndex, messageInBatchIndex);
