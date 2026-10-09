@@ -71,7 +71,6 @@ public class PublishedMessageTask implements Callable<CompletableFuture<Void>> {
 
     public PublishedMessageTask(ConsumerRecord<String, String> consumerRecord, PublishedMessageTaskFactory factory) {
         this.consumerRecord = consumerRecord;
-
         this.tracer = factory.getTracer();
         this.eventWriter = factory.getEventWriter();
         this.metricsHelper = factory.getMetricsHelper();
@@ -140,7 +139,7 @@ public class PublishedMessageTask implements Callable<CompletableFuture<Void>> {
                 try {
                     enrichTracing(multiplexSpan, subscriptionEventMessage, filteredEventMessage);
                     messagePublishingTask = sendMessageToKafka(subscriptionEventMessage, filteredEventMessage)
-                            .thenRun(() -> {
+                            .whenComplete((r, ex) -> {
                                 multiplexSpan.finish();
                                 var tags = metricsHelper.buildTagsFromSubscriptionEventMessage(subscriptionEventMessage);
                                 metricsHelper.getRegistry().counter(HorizonMetricsConstants.METRIC_MULTIPLEXED_EVENTS, tags).increment();
