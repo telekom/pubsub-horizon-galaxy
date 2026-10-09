@@ -4,6 +4,7 @@
 
 package de.telekom.horizon.galaxy.kafka;
 
+import brave.Span;
 import de.telekom.eni.pandora.horizon.tracing.HorizonTracer;
 import de.telekom.horizon.galaxy.config.GalaxyConfig;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -28,6 +29,7 @@ class PublishedMessageListenerTest {
     private SimpleMeterRegistry meterRegistry;
     private Acknowledgment acknowledgment;
     private PublishedMessageListener listener;
+    private Span span;
 
     @BeforeEach
     void setUp() {
@@ -37,9 +39,11 @@ class PublishedMessageListenerTest {
         galaxyConfig.setNackSleepDurationMs(1000);
         meterRegistry = new SimpleMeterRegistry();
         acknowledgment = mock(Acknowledgment.class);
+        span = mock(Span.class);
 
         // Make tracer.withCurrentTraceContext pass through the callable
         when(tracer.<CompletableFuture<Void>>withCurrentContext(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(tracer.startSpanFromKafkaHeaders(any(), any())).thenReturn(span);
 
         listener = new PublishedMessageListener(factory, tracer, galaxyConfig, meterRegistry);
     }
