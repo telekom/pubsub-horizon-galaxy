@@ -19,7 +19,12 @@ import org.springframework.kafka.support.Acknowledgment;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.*;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 
@@ -92,12 +97,14 @@ public class PublishedMessageListener extends AbstractConsumerSeekAware implemen
             final var consumerRecord = consumerRecords.get(i);
             final var task = newPublishedMessageTaskWithTrace(consumerRecord);
             final var messageInBatchIndex = i;
+            final var span = tracer.startSpanFromKafkaHeaders("consume published message", consumerRecord.headers());
 
             messagePublishingStatuses.add(
                     CompletableFuture.supplyAsync(() -> {
-                                try {
-                                    return task.call();
+                                try (var ignored = tracer.withSpanInScope(span)) {
+                                    return task.call().thenRun(span::finish);
                                 } catch (Exception e) {
+                                    span.finish();
                                     throw new CompletionException(e);
                                 }
                             }, executorService)

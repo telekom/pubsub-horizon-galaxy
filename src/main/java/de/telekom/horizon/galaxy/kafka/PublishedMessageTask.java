@@ -13,9 +13,16 @@ import de.telekom.eni.pandora.horizon.cache.service.DeDuplicationService;
 import de.telekom.eni.pandora.horizon.kafka.event.EventWriter;
 import de.telekom.eni.pandora.horizon.kubernetes.resource.Subscription;
 import de.telekom.eni.pandora.horizon.metrics.AdditionalFields;
+import de.telekom.eni.pandora.horizon.metrics.HorizonMetricsConstants;
 import de.telekom.eni.pandora.horizon.metrics.HorizonMetricsHelper;
 import de.telekom.eni.pandora.horizon.model.db.PartialEvent;
-import de.telekom.eni.pandora.horizon.model.event.*;
+import de.telekom.eni.pandora.horizon.model.event.DeliveryType;
+import de.telekom.eni.pandora.horizon.model.event.Event;
+import de.telekom.eni.pandora.horizon.model.event.IdentifiableMessage;
+import de.telekom.eni.pandora.horizon.model.event.PublishedEventMessage;
+import de.telekom.eni.pandora.horizon.model.event.Status;
+import de.telekom.eni.pandora.horizon.model.event.StatusMessage;
+import de.telekom.eni.pandora.horizon.model.event.SubscriptionEventMessage;
 import de.telekom.eni.pandora.horizon.model.http.HeaderConstants;
 import de.telekom.eni.pandora.horizon.model.meta.EventRetentionTime;
 import de.telekom.eni.pandora.horizon.model.tracing.Constants;
@@ -23,20 +30,22 @@ import de.telekom.eni.pandora.horizon.tracing.HorizonTracer;
 import de.telekom.horizon.galaxy.cache.PayloadSizeHistogramCache;
 import de.telekom.horizon.galaxy.cache.SubscriberCache;
 import de.telekom.horizon.galaxy.config.GalaxyConfig;
-import de.telekom.horizon.galaxy.model.EvaluationResultStatus;
 import de.telekom.horizon.galaxy.filters.FilterEventMessageWrapper;
 import de.telekom.horizon.galaxy.filters.Filters;
+import de.telekom.horizon.galaxy.model.EvaluationResultStatus;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.slf4j.MDC;
 import org.springframework.kafka.support.SendResult;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
 import java.util.regex.Pattern;
-
-import static de.telekom.eni.pandora.horizon.metrics.HorizonMetricsConstants.METRIC_MULTIPLEXED_EVENTS;
 
 /**
  * The {@code PublishedMessageTask} class is responsible for handling a single {@link PublishedEventMessage}.
@@ -55,10 +64,10 @@ public class PublishedMessageTask implements Callable<CompletableFuture<Void>> {
     private final HorizonMetricsHelper metricsHelper;
     private final SubscriberCache subscriptionCache;
     private final DeDuplicationService deDuplicationService;
-    private PublishedEventMessage publishedEventMessage;
     private final PayloadSizeHistogramCache incomingPayloadSizeCache;
     private final PayloadSizeHistogramCache outgoingPayloadSizeHistogramCache;
     private final GalaxyConfig galaxyConfig;
+    private PublishedEventMessage publishedEventMessage;
 
     public PublishedMessageTask(ConsumerRecord<String, String> consumerRecord, PublishedMessageTaskFactory factory) {
         this.consumerRecord = consumerRecord;
@@ -76,103 +85,99 @@ public class PublishedMessageTask implements Callable<CompletableFuture<Void>> {
 
     @Override
     public CompletableFuture<Void> call() {
-        //Start main span for published-message-task
-        var span = tracer.startSpanFromKafkaHeaders("consume published message", consumerRecord.headers());
-        try (var ignored = tracer.withSpanInScope(span)) {
-            //Get PublishedEventMessage from consumerRecord
-            try {
-                publishedEventMessage = objectMapper.readValue(consumerRecord.value(), PublishedEventMessage.class);
-            } catch (JsonProcessingException e) {
-                log.error("JsonProcessingException occurred while parsing published event message with key {}!", consumerRecord.key(), e);
-                // Better to move to DLQ for messages that are not parseable
+        //Get PublishedEventMessage from consumerRecord
+        try {
+            publishedEventMessage = objectMapper.readValue(consumerRecord.value(), PublishedEventMessage.class);
+        } catch (JsonProcessingException e) {
+            log.error("JsonProcessingException occurred while parsing published event message with key {}!", consumerRecord.key(), e);
+            // Better to move to DLQ for messages that are not parseable
+            return CompletableFuture.completedFuture(null);
+        }
+
+        try (
+                var ignored1 = MDC.putCloseable("UUID", publishedEventMessage.getUuid());
+                var ignored2 = MDC.putCloseable("EventId", publishedEventMessage.getEvent().getId())
+        ) {
+            recordIncomingPayloadSize();
+
+            log.info("Created Task from ConsumerRecord.");
+            final var event = publishedEventMessage.getEvent();
+            final var eventType = event.getType();
+            final var subscriptionResources = subscriptionCache.getSubscriptionsForEnvironmentAndEventType(publishedEventMessage.getEnvironment(), eventType);
+            if (subscriptionResources == null) {
+                log.info("No recipients found for event. Skipping multiplexing.");
                 return CompletableFuture.completedFuture(null);
             }
 
-            try (
-                    var ignored1 = MDC.putCloseable("UUID", publishedEventMessage.getUuid());
-                    var ignored2 = MDC.putCloseable("EventId", publishedEventMessage.getEvent().getId())
-            ) {
-                recordIncomingPayloadSize();
+            final var eventData = event.getData();
+            final var dataContentType = event.getDataContentType();
+            final var messagePublishingTasks = new ArrayList<CompletableFuture<Void>>(subscriptionResources.size());
+            final var eventJsonPayload = eventData != null && (dataContentType == null || jsonMediaTypeRegex.matcher(dataContentType.trim()).matches()) ?
+                    parseEventData(eventData)
+                    : null;
+            for (var subscriptionResource : subscriptionResources) {
+                final var subscription = subscriptionResource.getSpec().getSubscription();
+                final var subscriptionId = subscription.getSubscriptionId();
+                if (deDuplicationService.isDuplicate(publishedEventMessage, subscriptionId)) {
+                    continue;
+                }
 
-                log.info("Created Task from ConsumerRecord.");
-                final var event = publishedEventMessage.getEvent();
-                final var eventType = event.getType();
-                final var subscriptionResources = subscriptionCache.getSubscriptionsForEnvironmentAndEventType(publishedEventMessage.getEnvironment(), eventType);
-                if (subscriptionResources == null) {
-                    log.info("No recipients found for event. Skipping multiplexing.");
+                log.info("Applying filters.");
+                final var filteredEventMessage = getFilteredEventMessage(subscription, eventJsonPayload, galaxyConfig);
+
+                log.info("Creating SubscriptionEventMessage for subscription {}", subscriptionId);
+                final SubscriptionEventMessage subscriptionEventMessage;
+                try {
+                    subscriptionEventMessage = createSubscriptionEventMessage(filteredEventMessage, event, subscription);
+                } catch (Exception e) {
+                    log.error("An unknown error occurred while handling event.", e);
                     return CompletableFuture.completedFuture(null);
                 }
 
-                final var eventData = event.getData();
-                final var dataContentType = event.getDataContentType();
-                final var messagePublishingTasks = new ArrayList<CompletableFuture<SendResult<String, String>>>(subscriptionResources.size());
-                final var eventJsonPayload = eventData != null && (dataContentType == null || jsonMediaTypeRegex.matcher(dataContentType.trim()).matches()) ?
-                        parseEventData(eventData)
-                        : null;
-                for (var subscriptionResource : subscriptionResources) {
-                    final var subscription = subscriptionResource.getSpec().getSubscription();
-                    final var subscriptionId = subscription.getSubscriptionId();
-                    if (deDuplicationService.isDuplicate(publishedEventMessage, subscriptionId)) {
-                        continue;
-                    }
-
-                    log.info("Applying filters.");
-                    final var filteredEventMessage = getFilteredEventMessage(subscription, eventJsonPayload, galaxyConfig);
-
-                    log.info("Creating SubscriptionEventMessage for subscription {}", subscriptionId);
-                    final SubscriptionEventMessage subscriptionEventMessage;
-                    try {
-                        subscriptionEventMessage  = createSubscriptionEventMessage(filteredEventMessage, event, subscription);
-                    }  catch (Exception e) {
-                        log.error("An unknown error occurred while handling event.", e);
-                        return CompletableFuture.completedFuture(null);
-                    }
-
-                    log.info("Sending SubscriptionEventMessage for subscription {}.", subscriptionId);
-                    final var messagePublishingTask = sendMessageToKafka(subscriptionEventMessage, filteredEventMessage);
-                    messagePublishingTasks.add(messagePublishingTask);
+                log.info("Sending SubscriptionEventMessage for subscription {}.", subscriptionId);
+                final CompletableFuture<Void> messagePublishingTask;
+                var multiplexSpan = tracer.startScopedSpan("multiplex message");
+                try {
+                    enrichTracing(multiplexSpan, subscriptionEventMessage, filteredEventMessage);
+                    messagePublishingTask = sendMessageToKafka(subscriptionEventMessage, filteredEventMessage)
+                            .thenRun(() -> {
+                                multiplexSpan.finish();
+                                var tags = metricsHelper.buildTagsFromSubscriptionEventMessage(subscriptionEventMessage);
+                                metricsHelper.getRegistry().counter(HorizonMetricsConstants.METRIC_MULTIPLEXED_EVENTS, tags).increment();
+                            });
+                } catch (Exception e) {
+                    multiplexSpan.finish();
+                    return CompletableFuture.failedFuture(e);
                 }
-
-                return CompletableFuture.allOf(messagePublishingTasks.toArray(new CompletableFuture[0]));
+                messagePublishingTasks.add(messagePublishingTask);
             }
-        } finally {
-            span.finish();
+
+            return CompletableFuture.allOf(messagePublishingTasks.toArray(new CompletableFuture[0]));
         }
     }
 
-    private CompletableFuture<SendResult<String, String>> sendMessageToKafka(
+    private CompletableFuture<Void> sendMessageToKafka(
             final SubscriptionEventMessage subscriptionEventMessage,
             final FilterEventMessageWrapper filteredEventMessage
     ) {
-        final Callable<CompletableFuture<SendResult<String, String>>> sendMessageTask = () -> {
-            final var subscriptionId = subscriptionEventMessage.getSubscriptionId();
-            var multiplexSpan = tracer.startScopedSpan("multiplex message");
-            recordOutgoingPayloadSize(subscriptionEventMessage);
-            enrichTracing(multiplexSpan, subscriptionEventMessage, filteredEventMessage);
+        final var subscriptionId = subscriptionEventMessage.getSubscriptionId();
+        recordOutgoingPayloadSize(subscriptionEventMessage);
 
-            CompletableFuture<SendResult<String, String>> result;
-            try {
-                result = sendOutgoingMessage(filteredEventMessage, subscriptionEventMessage);
-                log.info("Successfully sent SubscriptionEventMessage for subscription {}.", subscriptionId);
-                trackEventForDeduplication(subscriptionEventMessage);
-            } catch (JsonProcessingException e) {
-                log.error("An error occurred while sending SubscriptionEventMessage for subscription {}!", subscriptionId, e);
-                result = sendFailedStatusMessage(subscriptionEventMessage);
-                trackEventForDeduplication(subscriptionEventMessage);
-            } finally {
-                var tags = metricsHelper.buildTagsFromSubscriptionEventMessage(subscriptionEventMessage);
-                metricsHelper.getRegistry().counter(METRIC_MULTIPLEXED_EVENTS, tags).increment();
-                multiplexSpan.finish();
-            }
-
-            return result;
-        };
-
+        CompletableFuture<Void> result;
         try {
-            return tracer.withCurrentContext(sendMessageTask).call();
-        } catch (Exception e) {
-            return CompletableFuture.failedFuture(e);
+            result = sendOutgoingMessage(filteredEventMessage, subscriptionEventMessage)
+                    .thenRun(() -> {
+                        log.info("Successfully sent SubscriptionEventMessage for subscription {}.", subscriptionId);
+                        trackEventForDeduplication(subscriptionEventMessage);
+                    });
+        } catch (JsonProcessingException e) {
+            log.error("An error occurred while sending SubscriptionEventMessage for subscription {}!", subscriptionId, e);
+            result = sendFailedStatusMessage(subscriptionEventMessage)
+                    .thenRun(() -> trackEventForDeduplication(subscriptionEventMessage));
         }
+
+        return result;
+
     }
 
     /**
