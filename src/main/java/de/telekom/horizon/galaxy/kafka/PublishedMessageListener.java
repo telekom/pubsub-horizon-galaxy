@@ -101,9 +101,8 @@ public class PublishedMessageListener extends AbstractConsumerSeekAware implemen
             messagePublishingStatuses.add(
                     CompletableFuture.supplyAsync(() -> {
                                 try (var ignored = tracer.withSpanInScope(span)) {
-                                    return task.call().thenRun(span::finish);
+                                    return task.call();
                                 } catch (Exception e) {
-                                    span.finish();
                                     throw new CompletionException(e);
                                 }
                             }, executorService)
