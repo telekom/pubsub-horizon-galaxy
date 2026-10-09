@@ -40,7 +40,6 @@ import java.util.function.Function;
 @Slf4j
 public class PublishedMessageListener extends AbstractConsumerSeekAware implements BatchAcknowledgingMessageListener<String, String> {
     private static final int NO_NACK_INDEX = -1;
-    private static final int PARALLELISM = 3;
 
     private final PublishedMessageTaskFactory publishedMessageTaskFactory;
     private final Duration kafkaNackSleepDuration;
@@ -67,7 +66,7 @@ public class PublishedMessageListener extends AbstractConsumerSeekAware implemen
                 .description("Nacks due to task execution failure")
                 .register(meterRegistry);
 
-        this.executorService = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors() * PARALLELISM);
+        this.executorService = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors());
     }
 
     /**
