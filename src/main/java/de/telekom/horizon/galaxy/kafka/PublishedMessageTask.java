@@ -130,7 +130,7 @@ public class PublishedMessageTask implements Callable<CompletableFuture<Void>> {
                     subscriptionEventMessage = createSubscriptionEventMessage(filteredEventMessage, event, subscription);
                 } catch (Exception e) {
                     log.error("An unknown error occurred while handling event.", e);
-                    return CompletableFuture.completedFuture(null);
+                    continue;
                 }
 
                 log.info("Sending SubscriptionEventMessage for subscription {}.", subscriptionId);
