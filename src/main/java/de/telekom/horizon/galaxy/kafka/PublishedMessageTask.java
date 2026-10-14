@@ -110,10 +110,10 @@ public class PublishedMessageTask implements Callable<CompletableFuture<Void>> {
 
             final var eventData = event.getData();
             final var dataContentType = event.getDataContentType();
-            final var messagePublishingTasks = new ArrayList<CompletableFuture<Void>>(subscriptionResources.size());
             final var eventJsonPayload = eventData != null && (dataContentType == null || jsonMediaTypeRegex.matcher(dataContentType.trim()).matches()) ?
                     parseEventData(eventData)
                     : null;
+            final var messagePublishingTasks = new ArrayList<CompletableFuture<Void>>(subscriptionResources.size());
             for (var subscriptionResource : subscriptionResources) {
                 final var subscription = subscriptionResource.getSpec().getSubscription();
                 final var subscriptionId = subscription.getSubscriptionId();
@@ -130,6 +130,7 @@ public class PublishedMessageTask implements Callable<CompletableFuture<Void>> {
                     subscriptionEventMessage = createSubscriptionEventMessage(filteredEventMessage, event, subscription);
                 } catch (Exception e) {
                     log.error("An unknown error occurred while handling event.", e);
+                    //We should send these events to a dead-letter-topic in future
                     continue;
                 }
 

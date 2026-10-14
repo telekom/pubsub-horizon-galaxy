@@ -16,6 +16,8 @@ import org.springframework.kafka.support.Acknowledgment;
 import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
@@ -30,6 +32,7 @@ class PublishedMessageListenerTest {
     private Acknowledgment acknowledgment;
     private PublishedMessageListener listener;
     private Span span;
+    private ExecutorService executor;
 
     @BeforeEach
     void setUp() {
@@ -40,12 +43,13 @@ class PublishedMessageListenerTest {
         meterRegistry = new SimpleMeterRegistry();
         acknowledgment = mock(Acknowledgment.class);
         span = mock(Span.class);
+        executor = Executors.newFixedThreadPool(3);
 
         // Make tracer.withCurrentTraceContext pass through the callable
         when(tracer.<CompletableFuture<Void>>withCurrentContext(any())).thenAnswer(invocation -> invocation.getArgument(0));
         when(tracer.startSpanFromKafkaHeaders(any(), any())).thenReturn(span);
 
-        listener = new PublishedMessageListener(factory, tracer, galaxyConfig, meterRegistry);
+        listener = new PublishedMessageListener(factory, tracer, galaxyConfig, meterRegistry, executor);
     }
 
     @Test
@@ -76,7 +80,7 @@ class PublishedMessageListenerTest {
 
     @Test
     void onMessageShouldNackAtEarliestFailureWhenBothRejectionAndTaskFailure() {
-        var smallPoolListener = new PublishedMessageListener(factory, tracer, galaxyConfig, meterRegistry);
+        var smallPoolListener = new PublishedMessageListener(factory, tracer, galaxyConfig, meterRegistry, executor);
 
         // First task fails, second gets rejected
         var failingTask = mock(PublishedMessageTask.class);

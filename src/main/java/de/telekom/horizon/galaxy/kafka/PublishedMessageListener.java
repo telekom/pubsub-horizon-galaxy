@@ -15,6 +15,7 @@ import org.jetbrains.annotations.NotNull;
 import org.springframework.kafka.listener.AbstractConsumerSeekAware;
 import org.springframework.kafka.listener.BatchAcknowledgingMessageListener;
 import org.springframework.kafka.support.Acknowledgment;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 
 import java.time.Duration;
 import java.util.ArrayList;
@@ -23,8 +24,7 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 
@@ -46,13 +46,14 @@ public class PublishedMessageListener extends AbstractConsumerSeekAware implemen
     private final HorizonTracer tracer;
     private final Counter nackCounter;
     private final Counter nackDueToTaskFailureCounter;
-    private final ExecutorService executorService;
+    private final Executor messageListenerExecutor;
 
     public PublishedMessageListener(
             PublishedMessageTaskFactory publishedMessageTaskFactory,
             HorizonTracer horizonTracer,
             GalaxyConfig galaxyConfig,
-            MeterRegistry meterRegistry
+            MeterRegistry meterRegistry,
+            Executor messageListenerExecutor
     ) {
         super();
         this.kafkaNackSleepDuration = Duration.ofMillis(galaxyConfig.getNackSleepDurationMs());
@@ -65,8 +66,7 @@ public class PublishedMessageListener extends AbstractConsumerSeekAware implemen
         this.nackDueToTaskFailureCounter = Counter.builder("pubsub.kafka.listener.nacks.task_failure")
                 .description("Nacks due to task execution failure")
                 .register(meterRegistry);
-
-        this.executorService = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors());
+        this.messageListenerExecutor = messageListenerExecutor;
     }
 
     /**
@@ -105,8 +105,8 @@ public class PublishedMessageListener extends AbstractConsumerSeekAware implemen
                                 } catch (Exception e) {
                                     throw new CompletionException(e);
                                 }
-                            }, executorService)
-                            .thenCompose(Function.identity())
+                            }, messageListenerExecutor)
+                            .thenComposeAsync(Function.identity(), messageListenerExecutor)
                             .whenComplete((res, ex) -> span.finish())
                             .exceptionally(ex -> {
                                 log.warn("Unexpected exception in message publishing task", ex);

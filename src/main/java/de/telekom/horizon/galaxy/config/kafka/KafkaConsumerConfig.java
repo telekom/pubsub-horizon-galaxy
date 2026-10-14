@@ -19,6 +19,7 @@ import org.apache.kafka.common.errors.InterruptException;
 import org.jetbrains.annotations.NotNull;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.task.ThreadPoolTaskExecutorBuilder;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.DependsOn;
@@ -28,6 +29,9 @@ import org.springframework.kafka.listener.ConcurrentMessageListenerContainer;
 import org.springframework.kafka.listener.ContainerProperties;
 import org.springframework.kafka.listener.DefaultErrorHandler;
 import org.springframework.kafka.listener.MessageListenerContainer;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
+
+import java.util.concurrent.Executor;
 
 @Configuration
 @Slf4j
@@ -40,8 +44,9 @@ public class KafkaConsumerConfig {
     public PublishedMessageListener publishedMessageListener(PublishedMessageTaskFactory publishedMessageTaskFactory,
                                                              HorizonTracer horizonTracer,
                                                              GalaxyConfig galaxyConfig,
-                                                             MeterRegistry meterRegistry) {
-        return new PublishedMessageListener(publishedMessageTaskFactory, horizonTracer, galaxyConfig, meterRegistry);
+                                                             MeterRegistry meterRegistry,
+                                                             Executor messageListenerExecutor) {
+        return new PublishedMessageListener(publishedMessageTaskFactory, horizonTracer, galaxyConfig, meterRegistry, messageListenerExecutor);
     }
 
     /**
@@ -80,6 +85,19 @@ public class KafkaConsumerConfig {
                 }
             }
         };
+    }
+
+    @Bean
+    public ThreadPoolTaskExecutor messageListenerExecutor(final GalaxyConfig galaxyConfig) {
+        final var executor = new ThreadPoolTaskExecutorBuilder()
+                .corePoolSize(galaxyConfig.getMessageListenerThreadPoolFixedSize())
+                .maxPoolSize(galaxyConfig.getMessageListenerThreadPoolFixedSize())
+                .queueCapacity(galaxyConfig.getMessageListenerThreadPoolQueueSize())
+                .threadNamePrefix("kafka-listener-")
+                .build();
+        executor.setPrestartAllCoreThreads(true);
+
+        return executor;
     }
 
     /**
