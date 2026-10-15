@@ -15,12 +15,10 @@ import org.jetbrains.annotations.NotNull;
 import org.springframework.kafka.listener.AbstractConsumerSeekAware;
 import org.springframework.kafka.listener.BatchAcknowledgingMessageListener;
 import org.springframework.kafka.support.Acknowledgment;
-import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ExecutionException;
@@ -94,7 +92,7 @@ public class PublishedMessageListener extends AbstractConsumerSeekAware implemen
 
         for (int i = 0; i < consumerRecords.size(); i++) {
             final var consumerRecord = consumerRecords.get(i);
-            final var task = newPublishedMessageTaskWithTrace(consumerRecord);
+            final var task = publishedMessageTaskFactory.newTask(consumerRecord);
             final var messageInBatchIndex = i;
             final var span = tracer.startSpanFromKafkaHeaders("consume published message", consumerRecord.headers());
 
@@ -153,9 +151,5 @@ public class PublishedMessageListener extends AbstractConsumerSeekAware implemen
             }
             return Math.min(oldIndex, newIndex);
         });
-    }
-
-    private Callable<CompletableFuture<Void>> newPublishedMessageTaskWithTrace(ConsumerRecord<String, String> consumerRecord) {
-        return tracer.withCurrentContext(publishedMessageTaskFactory.newTask(consumerRecord));
     }
 }
