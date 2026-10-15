@@ -46,6 +46,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
+import java.util.function.Function;
 import java.util.regex.Pattern;
 
 /**
@@ -171,16 +172,17 @@ public class PublishedMessageTask implements Callable<CompletableFuture<Void>> {
         CompletableFuture<Void> result;
         try {
             result = sendOutgoingMessage(filteredEventMessage, subscriptionEventMessage)
-                    .handleAsync((sendResult, throwable) -> {
-                        if (throwable != null) {
-                            log.error("An error occurred while sending SubscriptionEventMessage for subscription {}!", subscriptionId, e);
+                    .handleAsync((sendResult, ex) -> {
+                        if (ex != null) {
+                            log.error("An error occurred while sending SubscriptionEventMessage for subscription {}!", subscriptionId, ex);
                             return sendFailedStatusMessage(subscriptionEventMessage)
                                     .thenRun(() -> trackEventForDeduplication(subscriptionEventMessage));
                         }
                         log.info("Successfully sent SubscriptionEventMessage for subscription {}.", subscriptionId);
                         trackEventForDeduplication(subscriptionEventMessage);
-                        return sendResult;
-                    });
+                        return CompletableFuture.<Void>completedFuture(null);
+                    })
+                    .thenComposeAsync(Function.identity());
         } catch (JsonProcessingException e) {
             log.error("An error occurred while sending SubscriptionEventMessage for subscription {}!", subscriptionId, e);
             result = sendFailedStatusMessage(subscriptionEventMessage)
