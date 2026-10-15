@@ -5,6 +5,7 @@
 package de.telekom.horizon.galaxy.kafka;
 
 import brave.ScopedSpan;
+import brave.Span;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -136,11 +137,15 @@ public class PublishedMessageTask implements Callable<CompletableFuture<Void>> {
 
                 log.info("Sending SubscriptionEventMessage for subscription {}.", subscriptionId);
                 final CompletableFuture<Void> messagePublishingTask;
-                var multiplexSpan = tracer.startScopedSpan("multiplex message");
-                try {
+
+                var multiplexSpan = tracer.startSpan("multiplex message");
+                try (var ignored = tracer.withSpanInScope(multiplexSpan)) {
                     enrichTracing(multiplexSpan, subscriptionEventMessage, filteredEventMessage);
                     messagePublishingTask = sendMessageToKafka(subscriptionEventMessage, filteredEventMessage)
                             .whenComplete((r, ex) -> {
+                                if (ex != null) {
+                                    multiplexSpan.error(ex);
+                                }
                                 multiplexSpan.finish();
                                 var tags = metricsHelper.buildTagsFromSubscriptionEventMessage(subscriptionEventMessage);
                                 metricsHelper.getRegistry().counter(HorizonMetricsConstants.METRIC_MULTIPLEXED_EVENTS, tags).increment();
@@ -238,7 +243,7 @@ public class PublishedMessageTask implements Callable<CompletableFuture<Void>> {
      * @param subscriptionEventMessage The message whose delivery was unsuccessful.
      * @param subscriptionFilter       Contains information about the filter applied on the message for the subscription.
      */
-    private void enrichTracing(ScopedSpan multiplexSpan, SubscriptionEventMessage subscriptionEventMessage, FilterEventMessageWrapper subscriptionFilter) {
+    private void enrichTracing(Span multiplexSpan, SubscriptionEventMessage subscriptionEventMessage, FilterEventMessageWrapper subscriptionFilter) {
         multiplexSpan.tag(Constants.MULTIPLEXED_FROM, publishedEventMessage.getUuid());
         multiplexSpan.tag(Constants.SUBSCRIBER_ID, (String) subscriptionEventMessage.getAdditionalFields().get("subscriber-id"));
 
