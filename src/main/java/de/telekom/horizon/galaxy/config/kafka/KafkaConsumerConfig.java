@@ -32,6 +32,7 @@ import org.springframework.kafka.listener.MessageListenerContainer;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 
 import java.util.concurrent.Executor;
+import java.util.concurrent.ThreadPoolExecutor;
 
 @Configuration
 @Slf4j
@@ -96,6 +97,7 @@ public class KafkaConsumerConfig {
                 .threadNamePrefix("kafka-listener-")
                 .build();
         executor.setPrestartAllCoreThreads(true);
+        executor.getThreadPoolExecutor().setRejectedExecutionHandler(new ThreadPoolExecutor.CallerRunsPolicy());
 
         return executor;
     }
