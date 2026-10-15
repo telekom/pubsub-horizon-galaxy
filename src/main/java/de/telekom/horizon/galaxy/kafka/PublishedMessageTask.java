@@ -171,9 +171,15 @@ public class PublishedMessageTask implements Callable<CompletableFuture<Void>> {
         CompletableFuture<Void> result;
         try {
             result = sendOutgoingMessage(filteredEventMessage, subscriptionEventMessage)
-                    .thenRun(() -> {
+                    .handleAsync((sendResult, throwable) -> {
+                        if (throwable != null) {
+                            log.error("An error occurred while sending SubscriptionEventMessage for subscription {}!", subscriptionId, e);
+                            return sendFailedStatusMessage(subscriptionEventMessage)
+                                    .thenRun(() -> trackEventForDeduplication(subscriptionEventMessage));
+                        }
                         log.info("Successfully sent SubscriptionEventMessage for subscription {}.", subscriptionId);
                         trackEventForDeduplication(subscriptionEventMessage);
+                        return sendResult;
                     });
         } catch (JsonProcessingException e) {
             log.error("An error occurred while sending SubscriptionEventMessage for subscription {}!", subscriptionId, e);
