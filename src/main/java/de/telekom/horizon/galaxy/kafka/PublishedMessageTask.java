@@ -168,26 +168,13 @@ public class PublishedMessageTask implements Callable<CompletableFuture<Void>> {
         final var subscriptionId = subscriptionEventMessage.getSubscriptionId();
         recordOutgoingPayloadSize(subscriptionEventMessage);
 
-        CompletableFuture<Void> result;
-        try {
-            result = sendOutgoingMessage(filteredEventMessage, subscriptionEventMessage)
-                    .exceptionallyComposeAsync(ex -> {
-                        log.error("An error occurred while sending SubscriptionEventMessage for subscription {}!", subscriptionId, ex);
-                        sendFailedStatusMessage(subscriptionEventMessage)
-                                .thenRun(() -> trackEventForDeduplication(subscriptionEventMessage));
-                        return CompletableFuture.completedFuture(null);
-                    }, executor)
-                    .thenRunAsync(() -> {
-                        log.info("Successfully sent SubscriptionEventMessage for subscription {}.", subscriptionId);
-                        trackEventForDeduplication(subscriptionEventMessage);
-                    }, executor);
-        } catch (JsonProcessingException e) {
-            log.error("An error occurred while sending SubscriptionEventMessage for subscription {}!", subscriptionId, e);
-            result = sendFailedStatusMessage(subscriptionEventMessage)
-                    .thenRunAsync(() -> trackEventForDeduplication(subscriptionEventMessage), executor);
-        }
-
-        return result;
+        return sendOutgoingMessage(filteredEventMessage, subscriptionEventMessage)
+                .thenRunAsync(() -> log.info("Successfully sent SubscriptionEventMessage for subscription {}.", subscriptionId))
+                .exceptionallyComposeAsync((ex) -> {
+                    log.error("An error occurred while sending SubscriptionEventMessage for subscription {}!", subscriptionId, ex);
+                    return sendFailedStatusMessage(subscriptionEventMessage).thenRun(() -> {});
+                }, executor)
+                .thenRunAsync(() -> trackEventForDeduplication(subscriptionEventMessage), executor);
     }
 
     /**
@@ -272,9 +259,8 @@ public class PublishedMessageTask implements Callable<CompletableFuture<Void>> {
      * @param subscriptionFilter       the applied filters of the {@link SubscriptionEventMessage}, unsuccessful or successful
      * @param subscriptionEventMessage the event message sent to the kafka (if not dropped)
      * @return CompletableFuture       tracks the status of the async publishing of the message
-     * @throws JsonProcessingException thrown when there is a problem parsing the payload
      */
-    private CompletableFuture<SendResult<String, String>> sendOutgoingMessage(FilterEventMessageWrapper subscriptionFilter, SubscriptionEventMessage subscriptionEventMessage) throws JsonProcessingException {
+    private CompletableFuture<SendResult<String, String>> sendOutgoingMessage(FilterEventMessageWrapper subscriptionFilter, SubscriptionEventMessage subscriptionEventMessage) {
         var properties = tracer.getCurrentTracingHeaders();
 
         IdentifiableMessage outgoingMessage;
@@ -302,7 +288,11 @@ public class PublishedMessageTask implements Callable<CompletableFuture<Void>> {
             outgoingMessage = droppedMessage;
         }
 
-        return eventWriter.send(Objects.requireNonNullElse(subscriptionEventMessage.getEventRetentionTime(), EventRetentionTime.DEFAULT).getTopic(), outgoingMessage, tracer);
+        try {
+            return eventWriter.send(Objects.requireNonNullElse(subscriptionEventMessage.getEventRetentionTime(), EventRetentionTime.DEFAULT).getTopic(), outgoingMessage, tracer);
+        } catch (JsonProcessingException ex) {
+            return CompletableFuture.failedFuture(ex);
+        }
     }
 
     private FilterEventMessageWrapper getFilteredEventMessage(final Subscription subscription, final JsonNode eventJsonPayload, final GalaxyConfig galaxyConfig) {
