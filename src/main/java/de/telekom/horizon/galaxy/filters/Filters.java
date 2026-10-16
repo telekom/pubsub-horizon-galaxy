@@ -9,7 +9,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.jayway.jsonpath.JsonPathException;
 import de.telekom.eni.pandora.horizon.kubernetes.resource.Subscription;
-import de.telekom.eni.pandora.horizon.kubernetes.resource.SubscriptionResource;
 import de.telekom.eni.pandora.horizon.kubernetes.resource.SubscriptionTrigger;
 import de.telekom.horizon.galaxy.config.GalaxyConfig;
 import de.telekom.jsonfilter.operator.EvaluationResult;
@@ -38,22 +37,8 @@ import static de.telekom.horizon.galaxy.filters.JsonPathFilters.applyJsonPathRes
 public class Filters {
     private static final ObjectMapper objectMapper = new ObjectMapper();
 
-    /**
-     * Filter incoming data for each recipient based on their subscription.
-     *
-     * @param recipients     list of recipient subscriptions.
-     * @param jsonEventDataOrNull  incoming data in optional JsonNode format.
-     * @return map of subscriptionIds mapped to filtered event data for each subscription.
-     */
-    public static Map<String, FilterEventMessageWrapper> filterDataForRecipients(List<SubscriptionResource> recipients, JsonNode jsonEventDataOrNull, GalaxyConfig galaxyConfig) {
-        Map<String, FilterEventMessageWrapper> filteredEventWrapperPerSubscriptionId = new HashMap<>();
-
-        recipients.forEach(recipient -> {
-            var subscription = recipient.getSpec().getSubscription();
-            filteredEventWrapperPerSubscriptionId.put(subscription.getSubscriptionId(), getFilteredEventDataForSubscription(subscription, jsonEventDataOrNull, galaxyConfig));
-        });
-
-        return filteredEventWrapperPerSubscriptionId;
+    public static FilterEventMessageWrapper filterDataForRecipient(Subscription subscription, JsonNode jsonEvent, GalaxyConfig galaxyConfig) {
+        return getFilteredEventDataForSubscription(subscription, jsonEvent, galaxyConfig);
     }
 
     /**
