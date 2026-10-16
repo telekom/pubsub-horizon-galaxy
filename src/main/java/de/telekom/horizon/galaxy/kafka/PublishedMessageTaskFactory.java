@@ -21,6 +21,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
 
+import java.util.concurrent.Executor;
+
 /**
  * Factory for creating tasks associated with a published message.
  * @see PublishedEventMessage
@@ -41,9 +43,23 @@ public class PublishedMessageTaskFactory {
     private final GalaxyConfig galaxyConfig;
     private final ObjectMapper objectMapper;
     private final MeterRegistry meterRegistry;
+    private final Executor executor;
 
     @Autowired
-    public PublishedMessageTaskFactory(HorizonTracer tracer, EventWriter eventWriter, HorizonMetricsHelper metricsHelper, SubscriberCache subscriptionCache, DeDuplicationService deDuplicationService, KafkaProperties kafkaProperties, @Qualifier("incomingPayloadSizeCache") PayloadSizeHistogramCache incomingPayloadSizeCache, @Qualifier("outgoingPayloadSizeCache") PayloadSizeHistogramCache outgoingPayloadSizeHistogramCache, GalaxyConfig galaxyConfig, ObjectMapper objectMapper, MeterRegistry meterRegistry) {
+    public PublishedMessageTaskFactory(
+            HorizonTracer tracer,
+            EventWriter eventWriter,
+            HorizonMetricsHelper metricsHelper,
+            SubscriberCache subscriptionCache,
+            DeDuplicationService deDuplicationService,
+            KafkaProperties kafkaProperties,
+            @Qualifier("incomingPayloadSizeCache") PayloadSizeHistogramCache incomingPayloadSizeCache,
+            @Qualifier("outgoingPayloadSizeCache") PayloadSizeHistogramCache outgoingPayloadSizeHistogramCache,
+            GalaxyConfig galaxyConfig,
+            ObjectMapper objectMapper,
+            MeterRegistry meterRegistry,
+            Executor messageListenerExecutor
+    ) {
         this.tracer = tracer;
         this.eventWriter = eventWriter;
         this.metricsHelper = metricsHelper;
@@ -55,6 +71,7 @@ public class PublishedMessageTaskFactory {
         this.galaxyConfig = galaxyConfig;
         this.objectMapper = objectMapper;
         this.meterRegistry = meterRegistry;
+        this.executor = messageListenerExecutor;
     }
 
     public PublishedMessageTask newTask(ConsumerRecord<String, String> consumerRecord) {

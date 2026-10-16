@@ -23,6 +23,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
+import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 
@@ -104,20 +105,19 @@ public class PublishedMessageListener extends AbstractConsumerSeekAware implemen
                                     throw new CompletionException(e);
                                 }
                             }, messageListenerExecutor)
-                            .thenComposeAsync(Function.identity(), messageListenerExecutor)
-                            .whenComplete((res, ex) -> {
+                            .thenCompose(Function.identity())
+                            .whenCompleteAsync((res, ex) -> {
                                 if (ex != null) {
                                     span.error(ex);
                                 }
                                 span.finish();
-                            })
-                            .exceptionally(ex -> {
+                            }, messageListenerExecutor)
+                            .exceptionallyAsync(ex -> {
                                 log.warn("Unexpected exception in message publishing task", ex);
                                 updateFailedIndex(failedIndex, messageInBatchIndex);
                                 nackDueToTaskFailureCounter.increment();
                                 return null;
-                            }));
-
+                            }, messageListenerExecutor));
         }
 
         try {

@@ -4,7 +4,6 @@
 
 package de.telekom.horizon.galaxy.kafka;
 
-import brave.ScopedSpan;
 import brave.Span;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -46,7 +45,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
-import java.util.function.Function;
+import java.util.concurrent.Executor;
 import java.util.regex.Pattern;
 
 /**
@@ -69,6 +68,7 @@ public class PublishedMessageTask implements Callable<CompletableFuture<Void>> {
     private final PayloadSizeHistogramCache incomingPayloadSizeCache;
     private final PayloadSizeHistogramCache outgoingPayloadSizeHistogramCache;
     private final GalaxyConfig galaxyConfig;
+    private final Executor executor;
     private PublishedEventMessage publishedEventMessage;
 
     public PublishedMessageTask(ConsumerRecord<String, String> consumerRecord, PublishedMessageTaskFactory factory) {
@@ -82,6 +82,7 @@ public class PublishedMessageTask implements Callable<CompletableFuture<Void>> {
         this.outgoingPayloadSizeHistogramCache = factory.getOutgoingPayloadSizeHistogramCache();
         this.objectMapper = factory.getObjectMapper();
         this.galaxyConfig = factory.getGalaxyConfig();
+        this.executor = factory.getExecutor();
     }
 
     @Override
@@ -143,17 +144,15 @@ public class PublishedMessageTask implements Callable<CompletableFuture<Void>> {
                 try (var ignored = tracer.withSpanInScope(multiplexSpan)) {
                     enrichTracing(multiplexSpan, subscriptionEventMessage, filteredEventMessage);
                     messagePublishingTask = sendMessageToKafka(subscriptionEventMessage, filteredEventMessage)
-                            .whenComplete((r, ex) -> {
-                                if (ex != null) {
-                                    multiplexSpan.error(ex);
-                                }
+                            .whenCompleteAsync((r, ex) -> {
                                 multiplexSpan.finish();
                                 var tags = metricsHelper.buildTagsFromSubscriptionEventMessage(subscriptionEventMessage);
                                 metricsHelper.getRegistry().counter(HorizonMetricsConstants.METRIC_MULTIPLEXED_EVENTS, tags).increment();
-                            });
+                            }, executor);
                 } catch (Exception e) {
                     multiplexSpan.finish();
-                    return CompletableFuture.failedFuture(e);
+                    messagePublishingTasks.add(CompletableFuture.failedFuture(e));
+                    continue;
                 }
                 messagePublishingTasks.add(messagePublishingTask);
             }
@@ -172,25 +171,23 @@ public class PublishedMessageTask implements Callable<CompletableFuture<Void>> {
         CompletableFuture<Void> result;
         try {
             result = sendOutgoingMessage(filteredEventMessage, subscriptionEventMessage)
-                    .handleAsync((sendResult, ex) -> {
-                        if (ex != null) {
-                            log.error("An error occurred while sending SubscriptionEventMessage for subscription {}!", subscriptionId, ex);
-                            return sendFailedStatusMessage(subscriptionEventMessage)
-                                    .thenRun(() -> trackEventForDeduplication(subscriptionEventMessage));
-                        }
+                    .exceptionallyComposeAsync(ex -> {
+                        log.error("An error occurred while sending SubscriptionEventMessage for subscription {}!", subscriptionId, ex);
+                        sendFailedStatusMessage(subscriptionEventMessage)
+                                .thenRun(() -> trackEventForDeduplication(subscriptionEventMessage));
+                        return CompletableFuture.completedFuture(null);
+                    }, executor)
+                    .thenRunAsync(() -> {
                         log.info("Successfully sent SubscriptionEventMessage for subscription {}.", subscriptionId);
                         trackEventForDeduplication(subscriptionEventMessage);
-                        return CompletableFuture.<Void>completedFuture(null);
-                    })
-                    .thenComposeAsync(Function.identity());
+                    }, executor);
         } catch (JsonProcessingException e) {
             log.error("An error occurred while sending SubscriptionEventMessage for subscription {}!", subscriptionId, e);
             result = sendFailedStatusMessage(subscriptionEventMessage)
-                    .thenRun(() -> trackEventForDeduplication(subscriptionEventMessage));
+                    .thenRunAsync(() -> trackEventForDeduplication(subscriptionEventMessage), executor);
         }
 
         return result;
-
     }
 
     /**
