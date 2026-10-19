@@ -4,23 +4,34 @@
 
 package de.telekom.horizon.galaxy.kafka;
 
+import brave.Span;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import de.telekom.eni.pandora.horizon.cache.service.DeDuplicationService;
 import de.telekom.eni.pandora.horizon.kafka.config.KafkaProperties;
 import de.telekom.eni.pandora.horizon.kafka.event.EventWriter;
+import de.telekom.eni.pandora.horizon.kubernetes.resource.SubscriptionResource;
 import de.telekom.eni.pandora.horizon.metrics.HorizonMetricsHelper;
+import de.telekom.eni.pandora.horizon.model.event.PublishedEventMessage;
+import de.telekom.eni.pandora.horizon.model.event.SubscriptionEventMessage;
 import de.telekom.eni.pandora.horizon.tracing.HorizonTracer;
+import de.telekom.eni.pandora.horizon.tracing.ScopedDebugSpanWrapper;
 import de.telekom.horizon.galaxy.cache.PayloadSizeHistogramCache;
 import de.telekom.horizon.galaxy.cache.SubscriberCache;
 import de.telekom.horizon.galaxy.config.GalaxyConfig;
+import de.telekom.horizon.galaxy.utils.HorizonTestHelper;
 import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.NullAndEmptySource;
 import org.slf4j.MDC;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -29,14 +40,20 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 class PublishedMessageTaskTest {
+    private static final String PUBLISHED_EVENT = """
+            {"uuid": "uuid-1", "environment": "playground", "event": {"id": "event-1", "type": "my.event.type"}}
+            """;
     private HorizonTracer tracer;
     private EventWriter eventWriter;
     private HorizonMetricsHelper metricsHelper;
@@ -49,6 +66,7 @@ class PublishedMessageTaskTest {
     private MeterRegistry meterRegistry;
     private Executor executor;
     private PublishedMessageTaskFactory publishedMessageTaskFactory;
+    private Span span;
 
     @BeforeEach
     void setUp() {
@@ -63,6 +81,11 @@ class PublishedMessageTaskTest {
         galaxyConfig = mock(GalaxyConfig.class);
         meterRegistry = mock(MeterRegistry.class);
         executor = mock(Executor.class);
+        span = mock(Span.class);
+        var scopedSpan = mock(ScopedDebugSpanWrapper.class);
+
+        when(tracer.startSpan(anyString())).thenReturn(span);
+        when(tracer.startScopedDebugSpan(anyString())).thenReturn(scopedSpan);
 
         publishedMessageTaskFactory = mock(PublishedMessageTaskFactory.class);
         when(publishedMessageTaskFactory.getTracer()).thenReturn(tracer);
@@ -175,6 +198,66 @@ class PublishedMessageTaskTest {
                 galaxyConfig,
                 meterRegistry,
                 executor);
+    }
+
+    @ParameterizedTest
+    @NullAndEmptySource
+    void callShouldReturnSuccessfulResultAndSkipMultiplexingWhenNoSubscriptionsFound(List<SubscriptionResource> subscriptions) {
+        when(subscriberCache.getSubscriptionsForEnvironmentAndEventType("playground", "my.event.type")).thenReturn(subscriptions);
+
+        var consumerRecord = new ConsumerRecord<>("published", 0, 0L, "key", PUBLISHED_EVENT);
+        var result = new PublishedMessageTask(consumerRecord, publishedMessageTaskFactory).call();
+
+        assertTrue(result.isDone());
+        assertFalse(result.isCompletedExceptionally());
+        assertFalse(result.isCancelled());
+        verify(subscriberCache).getSubscriptionsForEnvironmentAndEventType("playground", "my.event.type");
+        verifyNoInteractions(deDuplicationService, eventWriter);
+    }
+
+    @Test
+    void callShouldReturnSuccessfulResultAndSkipMultiplexingWhenAllSubscriptionsAreDuplicates() {
+        var subscription = HorizonTestHelper.createDefaultSubscriptionResource("playground", "my.event.type");
+        var subscriptionId = subscription.getSpec().getSubscription().getSubscriptionId();
+        when(subscriberCache.getSubscriptionsForEnvironmentAndEventType("playground", "my.event.type")).thenReturn(List.of(subscription));
+        when(deDuplicationService.isDuplicate(any(PublishedEventMessage.class), anyString())).thenReturn(true);
+
+        var consumerRecord = new ConsumerRecord<>("published", 0, 0L, "key", PUBLISHED_EVENT);
+        var result = new PublishedMessageTask(consumerRecord, publishedMessageTaskFactory).call();
+
+        assertTrue(result.isDone());
+        assertFalse(result.isCompletedExceptionally());
+        assertFalse(result.isCancelled());
+        verify(deDuplicationService).isDuplicate(argThat((PublishedEventMessage message) -> "uuid-1".equals(message.getUuid())), eq(subscriptionId));
+        verifyNoInteractions(eventWriter);
+    }
+
+    @Test
+    void callShouldFilterOutDuplicateSubscriptionsAndMultiplexRemainingRecipients() throws Exception {
+        var duplicateSub = HorizonTestHelper.createDefaultSubscriptionResource("playground", "my.event.type");
+        var activeSub = HorizonTestHelper.createDefaultSubscriptionResource("playground", "my.event.type");
+        var duplicateSubId = duplicateSub.getSpec().getSubscription().getSubscriptionId();
+        var activeSubId = activeSub.getSpec().getSubscription().getSubscriptionId();
+
+        when(subscriberCache.getSubscriptionsForEnvironmentAndEventType("playground", "my.event.type"))
+                .thenReturn(List.of(duplicateSub, activeSub));
+        when(deDuplicationService.isDuplicate(any(PublishedEventMessage.class), eq(duplicateSubId))).thenReturn(true);
+        when(deDuplicationService.isDuplicate(any(PublishedEventMessage.class), eq(activeSubId))).thenReturn(false);
+        when(eventWriter.send(anyString(), any(), any())).thenReturn(CompletableFuture.completedFuture(null));
+        doAnswer(invocation -> {
+            invocation.<Runnable>getArgument(0).run();
+            return null;
+        }).when(executor).execute(any());
+        when(metricsHelper.getRegistry()).thenReturn(new SimpleMeterRegistry());
+
+        var consumerRecord = new ConsumerRecord<>("published", 0, 0L, "key", PUBLISHED_EVENT);
+        var result = new PublishedMessageTask(consumerRecord, publishedMessageTaskFactory).call();
+
+        assertTrue(result.isDone());
+        assertFalse(result.isCompletedExceptionally());
+        assertFalse(result.isCancelled());
+        verify(eventWriter, times(1)).send(anyString(), argThat(msg ->
+                msg instanceof SubscriptionEventMessage sem && activeSubId.equals(sem.getSubscriptionId())), any());
     }
 
     @Test
