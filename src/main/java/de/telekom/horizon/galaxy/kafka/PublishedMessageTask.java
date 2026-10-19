@@ -230,7 +230,9 @@ public class PublishedMessageTask implements Callable<CompletableFuture<Void>> {
             return eventWriter.send(
                             Objects.requireNonNullElse(subscriptionEventMessage.getEventRetentionTime(), EventRetentionTime.DEFAULT).getTopic(), statusMessage, tracer
                     )
+                    // we want to make sure none of the callback stages run on KafkaProducer's Thread
                     .whenCompleteAsync((res, ex) -> {
+                        // make the MDC available to the callback thread
                         MDC.setContextMap(mdcContext);
                     }, executor);
         } catch (JsonProcessingException ex) {
@@ -310,6 +312,7 @@ public class PublishedMessageTask implements Callable<CompletableFuture<Void>> {
                     )
                     // we want to make sure none of the callback stages run on KafkaProducer's Thread
                     .whenCompleteAsync((r, ex) -> {
+                        // make the MDC available to the callback thread
                         MDC.setContextMap(mdcContext);
                     }, executor);
         } catch (JsonProcessingException ex) {
