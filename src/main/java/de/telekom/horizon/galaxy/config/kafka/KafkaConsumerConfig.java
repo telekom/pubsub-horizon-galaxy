@@ -41,6 +41,26 @@ public class KafkaConsumerConfig {
     @Value("${horizon.kafka.fatalExceptionHandlingEnabled:true}")
     private boolean fatalExceptionHandlingEnabled;
 
+    /**
+     * Checks if the given exception or any of its causes is a fatal Kafka exception.
+     *
+     * @param exception The exception to check
+     * @return true if the exception or any cause is fatal, false otherwise
+     */
+    private static boolean isFatalException(Throwable exception) {
+        if (exception == null) {
+            return false;
+        }
+        if (exception instanceof InterruptedException ||
+                exception instanceof InterruptException ||
+                exception instanceof AuthenticationException ||
+                exception instanceof AuthorizationException ||
+                exception instanceof FencedInstanceIdException) {
+            return true;
+        }
+        return isFatalException(exception.getCause());
+    }
+
     @Bean
     public PublishedMessageListener publishedMessageListener(PublishedMessageTaskFactory publishedMessageTaskFactory,
                                                              HorizonTracer horizonTracer,
@@ -90,16 +110,16 @@ public class KafkaConsumerConfig {
 
     @Bean
     public ThreadPoolTaskExecutor messageListenerExecutor(final GalaxyConfig galaxyConfig) {
-        final var executor = new ThreadPoolTaskExecutorBuilder()
+        return new ThreadPoolTaskExecutorBuilder()
                 .corePoolSize(galaxyConfig.getMessageListenerThreadPoolFixedSize())
                 .maxPoolSize(galaxyConfig.getMessageListenerThreadPoolFixedSize())
                 .queueCapacity(galaxyConfig.getMessageListenerThreadPoolQueueSize())
+                .customizers(taskExecutor -> {
+                    taskExecutor.setRejectedExecutionHandler(new ThreadPoolExecutor.CallerRunsPolicy());
+                    taskExecutor.setPrestartAllCoreThreads(true);
+                })
                 .threadNamePrefix("kafka-listener-")
                 .build();
-        executor.setPrestartAllCoreThreads(true);
-        executor.getThreadPoolExecutor().setRejectedExecutionHandler(new ThreadPoolExecutor.CallerRunsPolicy());
-
-        return executor;
     }
 
     /**
@@ -126,25 +146,5 @@ public class KafkaConsumerConfig {
         listenerContainer.setCommonErrorHandler(kafkaErrorHandler);
 
         return listenerContainer;
-    }
-
-    /**
-     * Checks if the given exception or any of its causes is a fatal Kafka exception.
-     *
-     * @param exception The exception to check
-     * @return true if the exception or any cause is fatal, false otherwise
-     */
-    private static boolean isFatalException(Throwable exception) {
-        if (exception == null) {
-            return false;
-        }
-        if (exception instanceof InterruptedException ||
-                exception instanceof InterruptException ||
-                exception instanceof AuthenticationException ||
-                exception instanceof AuthorizationException ||
-                exception instanceof FencedInstanceIdException) {
-            return true;
-        }
-        return isFatalException(exception.getCause());
     }
 }
