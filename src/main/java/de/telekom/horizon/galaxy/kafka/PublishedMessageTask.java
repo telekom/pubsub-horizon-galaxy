@@ -46,6 +46,7 @@ import java.util.Objects;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
+import java.util.function.Function;
 import java.util.regex.Pattern;
 
 /**
@@ -156,11 +157,11 @@ public class PublishedMessageTask implements Callable<CompletableFuture<Void>> {
         try (var ignored = tracer.withSpanInScope(multiplexSpan)) {
             enrichTracing(multiplexSpan, subscriptionEventMessage, filteredEventMessage);
             return sendMessageToKafka(subscriptionEventMessage, filteredEventMessage)
-                    .whenCompleteAsync((r, ex) -> {
+                    .whenComplete((r, ex) -> {
                         multiplexSpan.finish();
                         var tags = metricsHelper.buildTagsFromSubscriptionEventMessage(subscriptionEventMessage);
                         metricsHelper.getRegistry().counter(HorizonMetricsConstants.METRIC_MULTIPLEXED_EVENTS, tags).increment();
-                    }, executor);
+                    });
         } catch (Exception e) {
             multiplexSpan.finish();
             return CompletableFuture.failedFuture(e);
@@ -174,13 +175,45 @@ public class PublishedMessageTask implements Callable<CompletableFuture<Void>> {
         final var subscriptionId = subscriptionEventMessage.getSubscriptionId();
         recordOutgoingPayloadSize(subscriptionEventMessage);
 
+        final var mdcContext = MDC.getCopyOfContextMap();
+
         return sendOutgoingMessage(filteredEventMessage, subscriptionEventMessage)
-                .thenRun(() -> log.info("Successfully sent SubscriptionEventMessage for subscription {}.", subscriptionId))
-                .exceptionallyCompose((ex) -> {
+                .thenRun(withMdcContext(() -> log.info("Successfully sent SubscriptionEventMessage for subscription {}.", subscriptionId), mdcContext))
+                .exceptionallyCompose(withMdcContext((ex) -> {
                     log.error("An error occurred while sending SubscriptionEventMessage for subscription {}!", subscriptionId, ex);
                     return sendFailedStatusMessage(subscriptionEventMessage).thenRun(() -> {});
-                })
-                .thenRun(() -> trackEventForDeduplication(subscriptionEventMessage));
+                }, mdcContext))
+                .thenRun(withMdcContext(() -> trackEventForDeduplication(subscriptionEventMessage), mdcContext));
+    }
+
+    private Runnable withMdcContext(Runnable runnable, Map<String, String> mdc) {
+        var previousMdc = MDC.getCopyOfContextMap();
+        return () -> {
+            try {
+                MDC.setContextMap(mdc);
+                runnable.run();
+            } finally {
+                if (previousMdc != null)
+                    MDC.setContextMap(previousMdc);
+                else
+                    MDC.clear();
+            }
+        };
+    }
+
+    private <T, R> Function<T, R> withMdcContext(Function<T, R> function, Map<String, String> mdc) {
+        var previousMdc = MDC.getCopyOfContextMap();
+        return (T input) -> {
+            try {
+                MDC.setContextMap(mdc);
+                return function.apply(input);
+            } finally {
+                if (previousMdc != null)
+                    MDC.setContextMap(previousMdc);
+                else
+                    MDC.clear();
+            }
+        };
     }
 
     /**
@@ -231,10 +264,7 @@ public class PublishedMessageTask implements Callable<CompletableFuture<Void>> {
                             Objects.requireNonNullElse(subscriptionEventMessage.getEventRetentionTime(), EventRetentionTime.DEFAULT).getTopic(), statusMessage, tracer
                     )
                     // we want to make sure none of the callback stages run on KafkaProducer's Thread
-                    .whenCompleteAsync((res, ex) -> {
-                        // make the MDC available to the callback thread
-                        MDC.setContextMap(mdcContext);
-                    }, executor);
+                    .whenCompleteAsync((res, ex) -> {}, executor);
         } catch (JsonProcessingException ex) {
             log.error("JsonProcessingException occurred while handling the exception from the multiplex task! Nack-ing event {}. May lead into nack-loop...", statusMessage, ex);
             throw new RuntimeException(ex);
@@ -302,8 +332,6 @@ public class PublishedMessageTask implements Callable<CompletableFuture<Void>> {
             outgoingMessage = droppedMessage;
         }
 
-        var mdcContext = MDC.getCopyOfContextMap();
-
         try {
             return eventWriter.send(
                             Objects.requireNonNullElse(subscriptionEventMessage.getEventRetentionTime(), EventRetentionTime.DEFAULT).getTopic(),
@@ -311,10 +339,7 @@ public class PublishedMessageTask implements Callable<CompletableFuture<Void>> {
                             tracer
                     )
                     // we want to make sure none of the callback stages run on KafkaProducer's Thread
-                    .whenCompleteAsync((r, ex) -> {
-                        // make the MDC available to the callback thread
-                        MDC.setContextMap(mdcContext);
-                    }, executor);
+                    .whenCompleteAsync((r, ex) -> {}, executor);
         } catch (JsonProcessingException ex) {
             return CompletableFuture.failedFuture(ex);
         }
