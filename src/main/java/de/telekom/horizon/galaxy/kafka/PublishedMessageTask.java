@@ -35,6 +35,7 @@ import de.telekom.horizon.galaxy.filters.Filters;
 import de.telekom.horizon.galaxy.model.EvaluationResultStatus;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.jetbrains.annotations.NotNull;
 import org.slf4j.MDC;
 import org.springframework.kafka.support.SendResult;
 
@@ -186,9 +187,9 @@ public class PublishedMessageTask implements Callable<CompletableFuture<Void>> {
                 .thenRun(withMdcContext(() -> trackEventForDeduplication(subscriptionEventMessage), mdcContext));
     }
 
-    private Runnable withMdcContext(Runnable runnable, Map<String, String> mdc) {
-        var previousMdc = MDC.getCopyOfContextMap();
+    private Runnable withMdcContext(Runnable runnable, @NotNull Map<String, String> mdc) {
         return () -> {
+            final var previousMdc = MDC.getCopyOfContextMap();
             try {
                 MDC.setContextMap(mdc);
                 runnable.run();
@@ -201,9 +202,9 @@ public class PublishedMessageTask implements Callable<CompletableFuture<Void>> {
         };
     }
 
-    private <T, R> Function<T, R> withMdcContext(Function<T, R> function, Map<String, String> mdc) {
-        var previousMdc = MDC.getCopyOfContextMap();
+    private <T, R> Function<T, R> withMdcContext(Function<T, R> function, @NotNull Map<String, String> mdc) {
         return (T input) -> {
+            final var previousMdc = MDC.getCopyOfContextMap();
             try {
                 MDC.setContextMap(mdc);
                 return function.apply(input);
