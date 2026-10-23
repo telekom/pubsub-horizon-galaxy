@@ -113,9 +113,7 @@ public class KafkaConsumerConfig {
         return new ThreadPoolTaskExecutorBuilder()
                 .corePoolSize(galaxyConfig.getMessageListenerThreadPoolFixedSize())
                 .maxPoolSize(galaxyConfig.getMessageListenerThreadPoolFixedSize())
-                .queueCapacity(galaxyConfig.getMessageListenerThreadPoolQueueSize())
                 .customizers(taskExecutor -> {
-                    taskExecutor.setRejectedExecutionHandler(new ThreadPoolExecutor.CallerRunsPolicy());
                     taskExecutor.setPrestartAllCoreThreads(true);
                 })
                 .threadNamePrefix("kafka-listener-")
