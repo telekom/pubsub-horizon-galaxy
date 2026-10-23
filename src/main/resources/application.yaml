@@ -53,6 +53,7 @@ galaxy:
   default-environment: ${GALAXY_DEFAULT_ENVIRONMENT:default}
   feature-jsonpath-filtering-enabled: ${GALAXY_FEATURE_JSONPATH_FILTERING_ENABLED:false}
   feature-jsonpath-filtering-event-types: ${GALAXY_FEATURE_JSONPATH_FILTERING_EVENT_TYPES:}
+  messageListenerThreadPoolFixedSize: ${GALAXY_MESSAGE_LISTENER_THREAD_POOL_FIXED_SIZE:8} #should be 8 x CPU_CORES
 management:
   metrics:
     distribution:

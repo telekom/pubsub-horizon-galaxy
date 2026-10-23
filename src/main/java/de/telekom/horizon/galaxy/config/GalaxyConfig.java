@@ -17,8 +17,7 @@ import java.util.List;
 @Getter
 @Setter
 public class GalaxyConfig {
-    private int messageListenerThreadPoolFixedSize = Runtime.getRuntime().availableProcessors() * 8;
-    private int messageListenerThreadPoolQueueSize = Integer.MAX_VALUE;
+    private int messageListenerThreadPoolFixedSize;
 
     private long nackSleepDurationMs;
 
