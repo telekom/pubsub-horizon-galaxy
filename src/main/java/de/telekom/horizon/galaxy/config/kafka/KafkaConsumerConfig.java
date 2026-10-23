@@ -19,6 +19,7 @@ import org.apache.kafka.common.errors.InterruptException;
 import org.jetbrains.annotations.NotNull;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.task.ThreadPoolTaskExecutorBuilder;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.DependsOn;
@@ -28,6 +29,10 @@ import org.springframework.kafka.listener.ConcurrentMessageListenerContainer;
 import org.springframework.kafka.listener.ContainerProperties;
 import org.springframework.kafka.listener.DefaultErrorHandler;
 import org.springframework.kafka.listener.MessageListenerContainer;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
+
+import java.util.concurrent.Executor;
+import java.util.concurrent.ThreadPoolExecutor;
 
 @Configuration
 @Slf4j
@@ -36,12 +41,33 @@ public class KafkaConsumerConfig {
     @Value("${horizon.kafka.fatalExceptionHandlingEnabled:true}")
     private boolean fatalExceptionHandlingEnabled;
 
+    /**
+     * Checks if the given exception or any of its causes is a fatal Kafka exception.
+     *
+     * @param exception The exception to check
+     * @return true if the exception or any cause is fatal, false otherwise
+     */
+    private static boolean isFatalException(Throwable exception) {
+        if (exception == null) {
+            return false;
+        }
+        if (exception instanceof InterruptedException ||
+                exception instanceof InterruptException ||
+                exception instanceof AuthenticationException ||
+                exception instanceof AuthorizationException ||
+                exception instanceof FencedInstanceIdException) {
+            return true;
+        }
+        return isFatalException(exception.getCause());
+    }
+
     @Bean
     public PublishedMessageListener publishedMessageListener(PublishedMessageTaskFactory publishedMessageTaskFactory,
                                                              HorizonTracer horizonTracer,
                                                              GalaxyConfig galaxyConfig,
-                                                             MeterRegistry meterRegistry) {
-        return new PublishedMessageListener(publishedMessageTaskFactory, horizonTracer, galaxyConfig, meterRegistry);
+                                                             MeterRegistry meterRegistry,
+                                                             Executor messageListenerExecutor) {
+        return new PublishedMessageListener(publishedMessageTaskFactory, horizonTracer, galaxyConfig, meterRegistry, messageListenerExecutor);
     }
 
     /**
@@ -82,6 +108,20 @@ public class KafkaConsumerConfig {
         };
     }
 
+    @Bean
+    public ThreadPoolTaskExecutor messageListenerExecutor(final GalaxyConfig galaxyConfig) {
+        return new ThreadPoolTaskExecutorBuilder()
+                .corePoolSize(galaxyConfig.getMessageListenerThreadPoolFixedSize())
+                .maxPoolSize(galaxyConfig.getMessageListenerThreadPoolFixedSize())
+                .queueCapacity(galaxyConfig.getMessageListenerThreadPoolQueueSize())
+                .customizers(taskExecutor -> {
+                    taskExecutor.setRejectedExecutionHandler(new ThreadPoolExecutor.CallerRunsPolicy());
+                    taskExecutor.setPrestartAllCoreThreads(true);
+                })
+                .threadNamePrefix("kafka-listener-")
+                .build();
+    }
+
     /**
      * This class handles the configuration of the Kafka concurrent message listener container.
      */
@@ -106,25 +146,5 @@ public class KafkaConsumerConfig {
         listenerContainer.setCommonErrorHandler(kafkaErrorHandler);
 
         return listenerContainer;
-    }
-
-    /**
-     * Checks if the given exception or any of its causes is a fatal Kafka exception.
-     *
-     * @param exception The exception to check
-     * @return true if the exception or any cause is fatal, false otherwise
-     */
-    private static boolean isFatalException(Throwable exception) {
-        if (exception == null) {
-            return false;
-        }
-        if (exception instanceof InterruptedException ||
-                exception instanceof InterruptException ||
-                exception instanceof AuthenticationException ||
-                exception instanceof AuthorizationException ||
-                exception instanceof FencedInstanceIdException) {
-            return true;
-        }
-        return isFatalException(exception.getCause());
     }
 }
