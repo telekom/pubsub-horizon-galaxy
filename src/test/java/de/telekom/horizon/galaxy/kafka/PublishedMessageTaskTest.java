@@ -33,6 +33,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
+import java.util.function.Function;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -44,6 +45,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -249,6 +251,9 @@ class PublishedMessageTaskTest {
             return null;
         }).when(executor).execute(any());
         when(metricsHelper.getRegistry()).thenReturn(new SimpleMeterRegistry());
+        doAnswer(invocation -> invocation.getArgument(0))
+                .when(tracer)
+                .withSpanInScope(any(), any());
 
         var consumerRecord = new ConsumerRecord<>("published", 0, 0L, "key", PUBLISHED_EVENT);
         var result = new PublishedMessageTask(consumerRecord, publishedMessageTaskFactory).call();
