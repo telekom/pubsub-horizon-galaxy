@@ -14,10 +14,13 @@ import de.telekom.eni.pandora.horizon.kubernetes.resource.SubscriptionResource;
 import de.telekom.eni.pandora.horizon.kubernetes.resource.SubscriptionTrigger;
 import de.telekom.eni.pandora.horizon.metrics.AdditionalFields;
 import de.telekom.eni.pandora.horizon.metrics.HorizonMetricsHelper;
+import de.telekom.eni.pandora.horizon.model.event.DeliveryType;
 import de.telekom.eni.pandora.horizon.model.event.PublishedEventMessage;
 import de.telekom.eni.pandora.horizon.model.event.Status;
 import de.telekom.eni.pandora.horizon.model.event.StatusMessage;
 import de.telekom.eni.pandora.horizon.model.event.SubscriptionEventMessage;
+import de.telekom.eni.pandora.horizon.model.http.HeaderConstants;
+import de.telekom.eni.pandora.horizon.model.meta.EventRetentionTime;
 import de.telekom.eni.pandora.horizon.tracing.HorizonTracer;
 import de.telekom.eni.pandora.horizon.tracing.ScopedDebugSpanWrapper;
 import de.telekom.horizon.galaxy.cache.PayloadSizeHistogramCache;
@@ -52,7 +55,9 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -487,6 +492,114 @@ class PublishedMessageTaskTest {
                             && EvaluationResultStatus.MATCH.toString()
                             .equals(sem.getAdditionalFields().get(AdditionalFields.SELECTION_FILTER_RESULT.value))
                             && "{\"foo\":\"bar\"}".equals(sem.getEvent().getData().toString())), any());
+        }
+    }
+
+    @Nested
+    class CreateSubscriptionMessage {
+
+        @BeforeEach
+        void setup() throws JsonProcessingException {
+            final var galaxyConfig = new GalaxyConfig();
+            when(publishedMessageTaskFactory.getGalaxyConfig()).thenReturn(galaxyConfig);
+            when(eventWriter.send(anyString(), any(), any())).thenReturn(CompletableFuture.completedFuture(null));
+            when(metricsHelper.getRegistry()).thenReturn(new SimpleMeterRegistry());
+            doAnswer(invocation -> invocation.getArgument(0))
+                    .when(tracer)
+                    .withSpanInScope(any(), any());
+            doAnswer(invocation -> {
+                invocation.<Runnable>getArgument(0).run();
+                return null;
+            }).when(executor).execute(any());
+        }
+
+        // Exception during SubscriptionEventMessage creation (invalid deliveryType) -> caught in call(), returns true
+        @Test
+        void callShouldReturnSuccessfulResultAndSkipSendingWhenDeliveryTypeIsInvalid() {
+            var sub = HorizonTestHelper.createDefaultSubscriptionResource("playground", "my.event.type");
+            sub.getSpec().getSubscription().setDeliveryType("invalid_type");
+            when(subscriberCache.getSubscriptionsForEnvironmentAndEventType("playground", "my.event.type")).thenReturn(List.of(sub));
+
+            var consumerRecord = new ConsumerRecord<>("published", 0, 0L, "key", PUBLISHED_EVENT);
+            var result = new PublishedMessageTask(consumerRecord, publishedMessageTaskFactory).call();
+
+            assertTrue(result.isDone());
+            assertFalse(result.isCompletedExceptionally());
+            assertFalse(result.isCancelled());
+            verifyNoInteractions(eventWriter);
+        }
+
+        // (MATCH replaces data), (non-null additionalFields & httpHeaders), (CALLBACK), (non-null retentionTime)
+        @Test
+        void callShouldCreateCallbackMessageWithFilteredDataCustomHeadersFieldsAndRetentionTime() throws Exception {
+            var sub = HorizonTestHelper.getSubscriptionResourceWithSelectionFilter("playground", "my.event.type");
+            var subscription = sub.getSpec().getSubscription();
+            subscription.getTrigger().setResponseFilter(List.of("foo"));
+            subscription.setDeliveryType("callback");
+            subscription.setEventRetentionTime("1h");
+            when(subscriberCache.getSubscriptionsForEnvironmentAndEventType("playground", "my.event.type")).thenReturn(List.of(sub));
+            when(eventWriter.send(anyString(), any(), any())).thenReturn(CompletableFuture.completedFuture(null));
+
+            var record = """
+            {
+              "uuid": "uuid-1",
+              "environment": "playground",
+              "additionalFields": {"custom-field": "custom-val"},
+              "httpHeaders": {"X-Custom": ["header-val"]},
+              "event": {"id": "event-1", "type": "my.event.type", "data": {"foo": "bar", "number": 15}}
+            }""";
+
+            var consumerRecord = new ConsumerRecord<>("published", 0, 0L, "key", record);
+            var result = new PublishedMessageTask(consumerRecord, publishedMessageTaskFactory).call();
+
+            assertTrue(result.isDone());
+            assertFalse(result.isCompletedExceptionally());
+            assertFalse(result.isCancelled());
+            verify(eventWriter).send(eq(EventRetentionTime.fromString("1H").getTopic()), argThat(msg -> {
+                if (!(msg instanceof SubscriptionEventMessage sem)) return false;
+                return sem.getDeliveryType() == DeliveryType.CALLBACK
+                        && sem.getEventRetentionTime() == EventRetentionTime.fromString("1H")
+                        && "{\"foo\":\"bar\"}".equals(sem.getEvent().getData().toString())
+                        && "custom-val".equals(sem.getAdditionalFields().get("custom-field"))
+                        && subscription.getSubscriberId().equals(sem.getAdditionalFields().get("subscriber-id"))
+                        && subscription.getCallback().equals(sem.getAdditionalFields().get("callback-url"))
+                        && List.of("header-val").equals(sem.getHttpHeaders().get("X-Custom"))
+                        && List.of("event-1").equals(sem.getHttpHeaders().get(HeaderConstants.X_EVENT_ID))
+                        && List.of("my.event.type").equals(sem.getHttpHeaders().get(HeaderConstants.X_EVENT_TYPE))
+                        && List.of(subscription.getPublisherId()).equals(sem.getHttpHeaders().get(HeaderConstants.X_PUBSUB_PUBLISHER_ID))
+                        && List.of(subscription.getSubscriberId()).equals(sem.getHttpHeaders().get(HeaderConstants.X_PUBSUB_SUBSCRIBER_ID))
+                        && List.of(subscription.getSubscriptionId()).equals(sem.getHttpHeaders().get(HeaderConstants.X_SUBSCRIPTION_ID));
+            }), any());
+        }
+
+        // (NO_FILTER keeps original data), (null additionalFields & httpHeaders), (non-CALLBACK / SSE), (null retentionTime -> DEFAULT)
+        @Test
+        void callShouldCreateNonCallbackMessageWithOriginalDataDefaultRetentionAndNoCallbackHeaders() throws Exception {
+            var sub = HorizonTestHelper.createDefaultSubscriptionResource("playground", "my.event.type");
+            var subscription = sub.getSpec().getSubscription();
+            subscription.setDeliveryType("server_sent_event");
+            subscription.setEventRetentionTime(null);
+            when(subscriberCache.getSubscriptionsForEnvironmentAndEventType("playground", "my.event.type")).thenReturn(List.of(sub));
+            when(eventWriter.send(anyString(), any(), any())).thenReturn(CompletableFuture.completedFuture(null));
+
+            var record = """
+            {"uuid": "uuid-1", "environment": "playground", "event": {"id": "event-1", "type": "my.event.type", "data": "raw-payload"}}""";
+
+            var consumerRecord = new ConsumerRecord<>("published", 0, 0L, "key", record);
+            var result = new PublishedMessageTask(consumerRecord, publishedMessageTaskFactory).call();
+
+            assertTrue(result.isDone());
+            assertFalse(result.isCompletedExceptionally());
+            assertFalse(result.isCancelled());
+            verify(eventWriter).send(eq(EventRetentionTime.DEFAULT.getTopic()), argThat(msg -> {
+                if (!(msg instanceof SubscriptionEventMessage sem)) return false;
+                return sem.getDeliveryType() == DeliveryType.SERVER_SENT_EVENT
+                        && sem.getEventRetentionTime() == EventRetentionTime.DEFAULT
+                        && "raw-payload".equals(sem.getEvent().getData())
+                        && subscription.getSubscriberId().equals(sem.getAdditionalFields().get("subscriber-id"))
+                        && !sem.getAdditionalFields().containsKey("callback-url")
+                        && sem.getHttpHeaders().isEmpty();
+            }), any());
         }
     }
 }
