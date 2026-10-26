@@ -35,7 +35,6 @@ import de.telekom.horizon.galaxy.filters.Filters;
 import de.telekom.horizon.galaxy.model.EvaluationResultStatus;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
-import org.jetbrains.annotations.NotNull;
 import org.slf4j.MDC;
 import org.springframework.kafka.support.SendResult;
 
@@ -47,8 +46,9 @@ import java.util.Objects;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
-import java.util.function.Function;
 import java.util.regex.Pattern;
+
+import static de.telekom.eni.pandora.horizon.logging.MdcDecorator.withMdcContext;
 
 /**
  * The {@code PublishedMessageTask} class is responsible for handling a single {@link PublishedEventMessage}.
@@ -153,7 +153,7 @@ public class PublishedMessageTask implements Callable<CompletableFuture<Void>> {
             final String subscriptionId
     ) {
         log.info("Sending SubscriptionEventMessage for subscription {}.", subscriptionId);
-        var multiplexSpan = tracer.startSpan("multiplex message");
+        final var multiplexSpan = tracer.startSpan("multiplex message");
 
         try (var ignored = tracer.withSpanInScope(multiplexSpan)) {
             enrichTracing(multiplexSpan, subscriptionEventMessage, filteredEventMessage);
@@ -182,50 +182,13 @@ public class PublishedMessageTask implements Callable<CompletableFuture<Void>> {
         return sendOutgoingMessage(filteredEventMessage, subscriptionEventMessage)
                 .thenRun(withMdcContext(() -> log.info("Successfully sent SubscriptionEventMessage for subscription {}.", subscriptionId), mdcContext))
                 .exceptionallyCompose(
-                        withSpanInScope(
-                                withMdcContext((ex) -> {
-                                    log.error("An error occurred while sending SubscriptionEventMessage for subscription {}!", subscriptionId, ex);
-                                    return sendFailedStatusMessage(subscriptionEventMessage).thenRun(() -> {});
-                                }, mdcContext), span))
+                        tracer.withSpanInScope(
+                                withMdcContext(
+                                        (ex) -> {
+                                            log.error("An error occurred while sending SubscriptionEventMessage for subscription {}!", subscriptionId, ex);
+                                            return sendFailedStatusMessage(subscriptionEventMessage).thenRun(() -> {});
+                                        }, mdcContext), span))
                 .thenRun(withMdcContext(() -> trackEventForDeduplication(subscriptionEventMessage), mdcContext));
-    }
-
-    private <T, R> Function<T, R> withSpanInScope(final Function<T, R> function, final Span span) {
-        return (T input) -> {
-            try (var ignored = tracer.withSpanInScope(span)) {
-                return function.apply(input);
-            }
-        };
-    }
-
-    private Runnable withMdcContext(Runnable runnable, @NotNull Map<String, String> mdc) {
-        return () -> {
-            final var previousMdc = MDC.getCopyOfContextMap();
-            try {
-                MDC.setContextMap(mdc);
-                runnable.run();
-            } finally {
-                if (previousMdc != null)
-                    MDC.setContextMap(previousMdc);
-                else
-                    MDC.clear();
-            }
-        };
-    }
-
-    private <T, R> Function<T, R> withMdcContext(Function<T, R> function, @NotNull Map<String, String> mdc) {
-        return (T input) -> {
-            final var previousMdc = MDC.getCopyOfContextMap();
-            try {
-                MDC.setContextMap(mdc);
-                return function.apply(input);
-            } finally {
-                if (previousMdc != null)
-                    MDC.setContextMap(previousMdc);
-                else
-                    MDC.clear();
-            }
-        };
     }
 
     /**
@@ -258,7 +221,7 @@ public class PublishedMessageTask implements Callable<CompletableFuture<Void>> {
     }
 
     /**
-     * Creates a {@link StatusMessage} indicating the event delivery has failed and sends this {@link Status#FAILED} message <br>synchronously</br> to Kafka.
+     * Creates a {@link StatusMessage} indicating the event delivery has failed and sends this {@link Status#FAILED} message <br>asynchronously</br> to Kafka.
      * If an error occurs during this process, it is logged, and a new {@link RuntimeException} is thrown.
      *
      * @param subscriptionEventMessage the event message that failed to be delivered
