@@ -5,24 +5,32 @@
 package de.telekom.horizon.galaxy.kafka;
 
 import brave.Span;
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import de.telekom.eni.pandora.horizon.cache.service.DeDuplicationService;
 import de.telekom.eni.pandora.horizon.kafka.config.KafkaProperties;
 import de.telekom.eni.pandora.horizon.kafka.event.EventWriter;
 import de.telekom.eni.pandora.horizon.kubernetes.resource.SubscriptionResource;
+import de.telekom.eni.pandora.horizon.kubernetes.resource.SubscriptionTrigger;
+import de.telekom.eni.pandora.horizon.metrics.AdditionalFields;
 import de.telekom.eni.pandora.horizon.metrics.HorizonMetricsHelper;
 import de.telekom.eni.pandora.horizon.model.event.PublishedEventMessage;
+import de.telekom.eni.pandora.horizon.model.event.Status;
+import de.telekom.eni.pandora.horizon.model.event.StatusMessage;
 import de.telekom.eni.pandora.horizon.model.event.SubscriptionEventMessage;
 import de.telekom.eni.pandora.horizon.tracing.HorizonTracer;
 import de.telekom.eni.pandora.horizon.tracing.ScopedDebugSpanWrapper;
 import de.telekom.horizon.galaxy.cache.PayloadSizeHistogramCache;
 import de.telekom.horizon.galaxy.cache.SubscriberCache;
 import de.telekom.horizon.galaxy.config.GalaxyConfig;
+import de.telekom.horizon.galaxy.model.EvaluationResultStatus;
 import de.telekom.horizon.galaxy.utils.HorizonTestHelper;
+import de.telekom.jsonfilter.operator.comparison.EqualsOperator;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.NullAndEmptySource;
@@ -33,7 +41,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
-import java.util.function.Function;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -45,7 +52,6 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
-import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -265,7 +271,222 @@ class PublishedMessageTaskTest {
                 msg instanceof SubscriptionEventMessage sem && activeSubId.equals(sem.getSubscriptionId())), any());
     }
 
-    @Test
-    void call() {
+    @Nested
+    class EventDataParsingFilterEvaluation {
+
+        @BeforeEach
+        void setUp() throws JsonProcessingException {
+            var galaxyConfig = new GalaxyConfig();
+            galaxyConfig.setFeatureJsonPathFilteringEnabled(false);
+            when(publishedMessageTaskFactory.getGalaxyConfig()).thenReturn(galaxyConfig);
+            when(eventWriter.send(anyString(), any(), any())).thenReturn(CompletableFuture.completedFuture(null));
+            when(metricsHelper.getRegistry()).thenReturn(new SimpleMeterRegistry());
+            doAnswer(invocation -> invocation.getArgument(0))
+                    .when(tracer)
+                    .withSpanInScope(any(), any());
+            doAnswer(invocation -> {
+                invocation.<Runnable>getArgument(0).run();
+                return null;
+            }).when(executor).execute(any());
+        }
+
+        // (eventData == null) -> INVALID_PAYLOAD_ERROR
+        @Test
+        void callShouldDropWithInvalidPayloadErrorWhenEventDataIsNull() throws Exception {
+            var sub = HorizonTestHelper.getSubscriptionResourceWithSelectionFilter("playground", "my.event.type");
+            when(subscriberCache.getSubscriptionsForEnvironmentAndEventType("playground", "my.event.type")).thenReturn(List.of(sub));
+
+            var consumerRecord = new ConsumerRecord<>("published", 0, 0L, "key", PUBLISHED_EVENT);
+            var result = new PublishedMessageTask(consumerRecord, publishedMessageTaskFactory).call();
+
+            assertTrue(result.isDone());
+            assertFalse(result.isCompletedExceptionally());
+            assertFalse(result.isCancelled());
+            verify(eventWriter).send(anyString(), argThat(msg ->
+                    msg instanceof StatusMessage sm
+                            && sm.getStatus() == Status.DROPPED
+                            && EvaluationResultStatus.INVALID_PAYLOAD_ERROR.toString()
+                            .equals(sm.getAdditionalFields().get(AdditionalFields.SELECTION_FILTER_RESULT.value))), any());
+        }
+
+        // non-JSON dataContentType -> INVALID_PAYLOAD_ERROR
+        @Test
+        void callShouldDropWithInvalidPayloadErrorWhenContentTypeIsNotJson() throws Exception {
+            var sub = HorizonTestHelper.getSubscriptionResourceWithSelectionFilter("playground", "my.event.type");
+            when(subscriberCache.getSubscriptionsForEnvironmentAndEventType("playground", "my.event.type")).thenReturn(List.of(sub));
+
+            var record = """
+            {"uuid":"uuid-1","environment":"playground","event":{"id":"event-1","type":"my.event.type","datacontenttype":"text/plain","data":"{\\"foo\\":\\"bar\\",\\"number\\":15}"}}""";
+
+            var consumerRecord = new ConsumerRecord<>("published", 0, 0L, "key", record);
+            var result = new PublishedMessageTask(consumerRecord, publishedMessageTaskFactory).call();
+
+            assertTrue(result.isDone());
+            assertFalse(result.isCompletedExceptionally());
+            assertFalse(result.isCancelled());
+            verify(eventWriter).send(anyString(), argThat(msg ->
+                    msg instanceof StatusMessage sm
+                            && sm.getStatus() == Status.DROPPED
+                            && EvaluationResultStatus.INVALID_PAYLOAD_ERROR.toString()
+                            .equals(sm.getAdditionalFields().get(AdditionalFields.SELECTION_FILTER_RESULT.value))), any());
+        }
+
+        // invalid JSON String -> JsonProcessingException -> INVALID_PAYLOAD_ERROR
+        @Test
+        void callShouldDropWithInvalidPayloadErrorWhenEventDataStringIsInvalidJson() throws Exception {
+            var sub = HorizonTestHelper.getSubscriptionResourceWithSelectionFilter("playground", "my.event.type");
+            when(subscriberCache.getSubscriptionsForEnvironmentAndEventType("playground", "my.event.type")).thenReturn(List.of(sub));
+
+            var record = """
+            {"uuid":"uuid-1","environment":"playground","event":{"id":"event-1","type":"my.event.type","datacontenttype":"application/json","data":"{invalid"}}""";
+
+            var consumerRecord = new ConsumerRecord<>("published", 0, 0L, "key", record);
+            var result = new PublishedMessageTask(consumerRecord, publishedMessageTaskFactory).call();
+
+            assertTrue(result.isDone());
+            assertFalse(result.isCompletedExceptionally());
+            assertFalse(result.isCancelled());
+            verify(eventWriter).send(anyString(), argThat(msg ->
+                    msg instanceof StatusMessage sm
+                            && sm.getStatus() == Status.DROPPED
+                            && EvaluationResultStatus.INVALID_PAYLOAD_ERROR.toString()
+                            .equals(sm.getAdditionalFields().get(AdditionalFields.SELECTION_FILTER_RESULT.value))), any());
+        }
+
+        // (empty String i.e. Jackson MissingNode) -> INVALID_PAYLOAD_ERROR
+        @Test
+        void callShouldDropWithInvalidPayloadErrorWhenEventDataParsesToMissingNode() throws Exception {
+            var sub = HorizonTestHelper.getSubscriptionResourceWithSelectionFilter("playground", "my.event.type");
+            when(subscriberCache.getSubscriptionsForEnvironmentAndEventType("playground", "my.event.type")).thenReturn(List.of(sub));
+
+            var record = """
+            {"uuid":"uuid-1","environment":"playground","event":{"id":"event-1","type":"my.event.type","datacontenttype":"application/json","data":""}}""";
+
+            var consumerRecord = new ConsumerRecord<>("published", 0, 0L, "key", record);
+            var result = new PublishedMessageTask(consumerRecord, publishedMessageTaskFactory).call();
+
+            assertTrue(result.isDone());
+            assertFalse(result.isCompletedExceptionally());
+            assertFalse(result.isCancelled());
+            verify(eventWriter).send(anyString(), argThat(msg ->
+                    msg instanceof StatusMessage sm
+                            && sm.getStatus() == Status.DROPPED
+                            && EvaluationResultStatus.INVALID_PAYLOAD_ERROR.toString()
+                            .equals(sm.getAdditionalFields().get(AdditionalFields.SELECTION_FILTER_RESULT.value))), any());
+        }
+
+        // NO_FILTER
+        @Test
+        void callShouldSendProcessedMessageWithNoFilterWhenSubscriptionHasNoFilters() throws Exception {
+            var sub = HorizonTestHelper.createDefaultSubscriptionResource("playground", "my.event.type");
+            when(subscriberCache.getSubscriptionsForEnvironmentAndEventType("playground", "my.event.type")).thenReturn(List.of(sub));
+
+            var consumerRecord = new ConsumerRecord<>("published", 0, 0L, "key", PUBLISHED_EVENT);
+            var result = new PublishedMessageTask(consumerRecord, publishedMessageTaskFactory).call();
+
+            assertTrue(result.isDone());
+            assertFalse(result.isCompletedExceptionally());
+            assertFalse(result.isCancelled());
+            verify(eventWriter).send(anyString(), argThat(msg ->
+                    msg instanceof SubscriptionEventMessage sem
+                            && sem.getStatus() == Status.PROCESSED
+                            && EvaluationResultStatus.NO_FILTER.toString()
+                            .equals(sem.getAdditionalFields().get(AdditionalFields.SELECTION_FILTER_RESULT.value))), any());
+        }
+
+        // SCOPE_FILTER_ERROR
+        @Test
+        void callShouldDropWithScopeFilterErrorWhenPublisherTriggerDoesNotMatch() throws Exception {
+            var sub = HorizonTestHelper.createDefaultSubscriptionResource("playground", "my.event.type");
+            var scopeTrigger = new SubscriptionTrigger();
+            scopeTrigger.setAdvancedSelectionFilter(new EqualsOperator<>("$.foo", "expected"));
+            sub.getSpec().getSubscription().setPublisherTrigger(scopeTrigger);
+            when(subscriberCache.getSubscriptionsForEnvironmentAndEventType("playground", "my.event.type")).thenReturn(List.of(sub));
+
+            var record = """
+            {"uuid":"uuid-1","environment":"playground","event":{"id":"event-1","type":"my.event.type","data":{"foo":"actual"}}}""";
+
+            var consumerRecord = new ConsumerRecord<>("published", 0, 0L, "key", record);
+            var result = new PublishedMessageTask(consumerRecord, publishedMessageTaskFactory).call();
+
+            assertTrue(result.isDone());
+            assertFalse(result.isCompletedExceptionally());
+            assertFalse(result.isCancelled());
+            verify(eventWriter).send(anyString(), argThat(msg ->
+                    msg instanceof StatusMessage sm
+                            && sm.getStatus() == Status.DROPPED
+                            && EvaluationResultStatus.SCOPE_FILTER_ERROR.toString()
+                            .equals(sm.getAdditionalFields().get(AdditionalFields.SELECTION_FILTER_RESULT.value))), any());
+        }
+
+        // CONSUMER_FILTER_ERROR
+        @Test
+        void callShouldDropWithConsumerFilterErrorWhenConsumerTriggerDoesNotMatch() throws Exception {
+            var sub = HorizonTestHelper.getSubscriptionResourceWithSelectionFilter("playground", "my.event.type");
+            when(subscriberCache.getSubscriptionsForEnvironmentAndEventType("playground", "my.event.type")).thenReturn(List.of(sub));
+
+            var record = """
+            {"uuid":"uuid-1","environment":"playground","event":{"id":"event-1","type":"my.event.type","data":{"foo":"wrong","number":15}}}""";
+
+            var consumerRecord = new ConsumerRecord<>("published", 0, 0L, "key", record);
+            var result = new PublishedMessageTask(consumerRecord, publishedMessageTaskFactory).call();
+
+            assertTrue(result.isDone());
+            assertFalse(result.isCompletedExceptionally());
+            assertFalse(result.isCancelled());
+            verify(eventWriter).send(anyString(), argThat(msg ->
+                    msg instanceof StatusMessage sm
+                            && sm.getStatus() == Status.DROPPED
+                            && EvaluationResultStatus.CONSUMER_FILTER_ERROR.toString()
+                            .equals(sm.getAdditionalFields().get(AdditionalFields.SELECTION_FILTER_RESULT.value))), any());
+        }
+
+        // String eventData + null dataContentType -> MATCH
+        @Test
+        void callShouldSendFilteredProcessedMessageWhenStringEventDataMatchesAndContentTypeIsNull() throws Exception {
+            var sub = HorizonTestHelper.getSubscriptionResourceWithSelectionFilter("playground", "my.event.type");
+            sub.getSpec().getSubscription().getTrigger().setResponseFilter(List.of("foo"));
+            when(subscriberCache.getSubscriptionsForEnvironmentAndEventType("playground", "my.event.type")).thenReturn(List.of(sub));
+
+            var record = """
+            {"uuid":"uuid-1","environment":"playground","event":{"id":"event-1","type":"my.event.type","data":"{\\"foo\\":\\"bar\\",\\"number\\":15}"}}""";
+
+            var consumerRecord = new ConsumerRecord<>("published", 0, 0L, "key", record);
+            var result = new PublishedMessageTask(consumerRecord, publishedMessageTaskFactory).call();
+
+            assertTrue(result.isDone());
+            assertFalse(result.isCompletedExceptionally());
+            assertFalse(result.isCancelled());
+            verify(eventWriter).send(anyString(), argThat(msg ->
+                    msg instanceof SubscriptionEventMessage sem
+                            && sem.getStatus() == Status.PROCESSED
+                            && EvaluationResultStatus.MATCH.toString()
+                            .equals(sem.getAdditionalFields().get(AdditionalFields.SELECTION_FILTER_RESULT.value))
+                            && "{\"foo\":\"bar\"}".equals(sem.getEvent().getData().toString())), any());
+        }
+
+        // Object eventData + application/*+json dataContentType -> MATCH
+        @Test
+        void callShouldSendFilteredProcessedMessageWhenObjectEventDataMatchesAndContentTypeIsJson() throws Exception {
+            var sub = HorizonTestHelper.getSubscriptionResourceWithSelectionFilter("playground", "my.event.type");
+            sub.getSpec().getSubscription().getTrigger().setResponseFilter(List.of("foo"));
+            when(subscriberCache.getSubscriptionsForEnvironmentAndEventType("playground", "my.event.type")).thenReturn(List.of(sub));
+
+            var record = """
+            {"uuid":"uuid-1","environment":"playground","event":{"id":"event-1","type":"my.event.type","datacontenttype":"application/cloudevents+json","data":{"foo":"bar","number":15}}}""";
+
+            var consumerRecord = new ConsumerRecord<>("published", 0, 0L, "key", record);
+            var result = new PublishedMessageTask(consumerRecord, publishedMessageTaskFactory).call();
+
+            assertTrue(result.isDone());
+            assertFalse(result.isCompletedExceptionally());
+            assertFalse(result.isCancelled());
+            verify(eventWriter).send(anyString(), argThat(msg ->
+                    msg instanceof SubscriptionEventMessage sem
+                            && sem.getStatus() == Status.PROCESSED
+                            && EvaluationResultStatus.MATCH.toString()
+                            .equals(sem.getAdditionalFields().get(AdditionalFields.SELECTION_FILTER_RESULT.value))
+                            && "{\"foo\":\"bar\"}".equals(sem.getEvent().getData().toString())), any());
+        }
     }
 }
