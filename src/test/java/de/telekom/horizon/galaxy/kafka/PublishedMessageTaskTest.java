@@ -60,6 +60,7 @@ import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -614,6 +615,10 @@ class PublishedMessageTaskTest {
                     .when(tracer)
                     .withSpanInScope(any(), any());
             when(metricsHelper.getRegistry()).thenReturn(new SimpleMeterRegistry());
+            doAnswer(invocation -> {
+                invocation.<Runnable>getArgument(0).run();
+                return null;
+            }).when(executor).execute(any());
         }
 
         // NB! purely theoretical case since current Executor is unbounded
@@ -622,11 +627,9 @@ class PublishedMessageTaskTest {
         void callShouldReturnFailedResultWhenSubscriptionExecutorRejectsTask() throws JsonProcessingException {
             var sub = HorizonTestHelper.createDefaultSubscriptionResource("playground", "my.event.type");
             when(subscriberCache.getSubscriptionsForEnvironmentAndEventType("playground", "my.event.type")).thenReturn(List.of(sub));
+            reset(executor);
             doThrow(new RejectedExecutionException("queue full")).when(executor).execute(any(Runnable.class));
             when(eventWriter.send(anyString(), any(), any())).thenReturn(CompletableFuture.completedFuture(null));
-            doAnswer(invocation -> invocation.getArgument(0))
-                    .when(tracer)
-                    .withSpanInScope(any(), any());
 
             var consumerRecord = new ConsumerRecord<>("published", 0, 0L, "key", PUBLISHED_EVENT);
             var result = new PublishedMessageTask(consumerRecord, publishedMessageTaskFactory).call();
@@ -649,10 +652,6 @@ class PublishedMessageTaskTest {
             when(publishedMessageTaskFactory.getTracer().getCurrentTracingHeaders()).thenReturn(Map.of("x-b3-traceid", "trace-1"));
             when(eventWriter.send(anyString(), any(), any())).thenReturn(CompletableFuture.completedFuture(null));
             when(metricsHelper.getRegistry()).thenReturn(new SimpleMeterRegistry());
-            doAnswer(invocation -> {
-                invocation.<Runnable>getArgument(0).run();
-                return null;
-            }).when(executor).execute(any());
 
             var consumerRecord = new ConsumerRecord<>("published", 0, 0L, "key", PUBLISHED_EVENT);
             var result = new PublishedMessageTask(consumerRecord, publishedMessageTaskFactory).call();
@@ -678,10 +677,6 @@ class PublishedMessageTaskTest {
             when(publishedMessageTaskFactory.getGalaxyConfig()).thenReturn(new GalaxyConfig());
             when(eventWriter.send(anyString(), any(), any())).thenReturn(CompletableFuture.completedFuture(null));
             when(metricsHelper.getRegistry()).thenReturn(new SimpleMeterRegistry());
-            doAnswer(invocation -> {
-                invocation.<Runnable>getArgument(0).run();
-                return null;
-            }).when(executor).execute(any());
 
             var consumerRecord = new ConsumerRecord<>("published", 0, 0L, "key", PUBLISHED_EVENT);
             var result = new PublishedMessageTask(consumerRecord, publishedMessageTaskFactory).call();
@@ -708,10 +703,6 @@ class PublishedMessageTaskTest {
                     .thenReturn(CompletableFuture.failedFuture(new RuntimeException("kafka failure")));
             when(eventWriter.send(anyString(), any(StatusMessage.class), any()))
                     .thenReturn(CompletableFuture.completedFuture(null));
-            doAnswer(invocation -> {
-                invocation.<Runnable>getArgument(0).run();
-                return null;
-            }).when(executor).execute(any());
 
             var consumerRecord = new ConsumerRecord<>("published", 0, 0L, "key", PUBLISHED_EVENT);
             var result = new PublishedMessageTask(consumerRecord, publishedMessageTaskFactory).call();
@@ -736,10 +727,6 @@ class PublishedMessageTaskTest {
             //noinspection unchecked
             when(eventWriter.send(anyString(), any(StatusMessage.class), any()))
                     .thenReturn(interruptedFuture);
-            doAnswer(invocation -> {
-                invocation.<Runnable>getArgument(0).run();
-                return null;
-            }).when(executor).execute(any());
 
             var consumerRecord = new ConsumerRecord<>("published", 0, 0L, "key", PUBLISHED_EVENT);
             var result = new PublishedMessageTask(consumerRecord, publishedMessageTaskFactory).call();
@@ -759,10 +746,6 @@ class PublishedMessageTaskTest {
                     .thenReturn(CompletableFuture.failedFuture(new RuntimeException("primary failure")));
             when(eventWriter.send(anyString(), any(StatusMessage.class), any()))
                     .thenReturn(CompletableFuture.failedFuture(new RuntimeException("fallback failure")));
-            doAnswer(invocation -> {
-                invocation.<Runnable>getArgument(0).run();
-                return null;
-            }).when(executor).execute(any());
 
             var consumerRecord = new ConsumerRecord<>("published", 0, 0L, "key", PUBLISHED_EVENT);
             var result = new PublishedMessageTask(consumerRecord, publishedMessageTaskFactory).call();
@@ -790,6 +773,9 @@ class PublishedMessageTaskTest {
             verify(deDuplicationService, never()).track(any(SubscriptionEventMessage.class));
             verify(span).finish();
             verifyNoInteractions(metricsHelper);
+            verifyNoInteractions(executor);
         }
     }
+
+
 }
