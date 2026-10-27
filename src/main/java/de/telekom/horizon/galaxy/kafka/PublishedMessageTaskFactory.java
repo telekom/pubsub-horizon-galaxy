@@ -58,7 +58,7 @@ public class PublishedMessageTaskFactory {
             GalaxyConfig galaxyConfig,
             ObjectMapper objectMapper,
             MeterRegistry meterRegistry,
-            Executor messageListenerExecutor
+            @Qualifier("messageListenerExecutor") Executor messageListenerExecutor
     ) {
         this.tracer = tracer;
         this.eventWriter = eventWriter;
