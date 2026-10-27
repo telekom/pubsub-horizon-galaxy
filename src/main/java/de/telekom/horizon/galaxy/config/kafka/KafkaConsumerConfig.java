@@ -110,6 +110,7 @@ public class KafkaConsumerConfig {
 
     @Bean
     public ThreadPoolTaskExecutor messageListenerExecutor(final GalaxyConfig galaxyConfig) {
+        // NB! current implementation expects an unbounded Executor, i.e. NOT RejectedExecutionException-safe
         return new ThreadPoolTaskExecutorBuilder()
                 .corePoolSize(galaxyConfig.getMessageListenerThreadPoolFixedSize())
                 .maxPoolSize(galaxyConfig.getMessageListenerThreadPoolFixedSize())
