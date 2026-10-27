@@ -733,6 +733,7 @@ class PublishedMessageTaskTest {
             when(subscriberCache.getSubscriptionsForEnvironmentAndEventType("playground", "my.event.type")).thenReturn(List.of(sub));
             when(eventWriter.send(anyString(), any(SubscriptionEventMessage.class), any()))
                     .thenReturn(CompletableFuture.failedFuture(new RuntimeException("primary failure")));
+            //noinspection unchecked
             when(eventWriter.send(anyString(), any(StatusMessage.class), any()))
                     .thenReturn(interruptedFuture);
             doAnswer(invocation -> {
