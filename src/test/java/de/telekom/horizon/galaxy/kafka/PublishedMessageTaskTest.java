@@ -21,6 +21,7 @@ import de.telekom.eni.pandora.horizon.model.event.StatusMessage;
 import de.telekom.eni.pandora.horizon.model.event.SubscriptionEventMessage;
 import de.telekom.eni.pandora.horizon.model.http.HeaderConstants;
 import de.telekom.eni.pandora.horizon.model.meta.EventRetentionTime;
+import de.telekom.eni.pandora.horizon.model.tracing.Constants;
 import de.telekom.eni.pandora.horizon.tracing.HorizonTracer;
 import de.telekom.eni.pandora.horizon.tracing.ScopedDebugSpanWrapper;
 import de.telekom.horizon.galaxy.cache.PayloadSizeHistogramCache;
@@ -44,6 +45,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
+import java.util.concurrent.RejectedExecutionException;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -57,7 +59,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -600,6 +602,193 @@ class PublishedMessageTaskTest {
                         && !sem.getAdditionalFields().containsKey("callback-url")
                         && sem.getHttpHeaders().isEmpty();
             }), any());
+        }
+    }
+
+    @Nested
+    class MultiplexingAndKafkaDispatch {
+
+        @BeforeEach
+        void setUp() {
+            doAnswer(invocation -> invocation.getArgument(0))
+                    .when(tracer)
+                    .withSpanInScope(any(), any());
+            when(metricsHelper.getRegistry()).thenReturn(new SimpleMeterRegistry());
+        }
+
+        // NB! purely theoretical case since current Executor is unbounded
+        // Executor rejects task -> sendFailed -> Executor rejects task again -> future completes exceptionally
+        @Test
+        void callShouldReturnFailedResultWhenSubscriptionExecutorRejectsTask() throws JsonProcessingException {
+            var sub = HorizonTestHelper.createDefaultSubscriptionResource("playground", "my.event.type");
+            when(subscriberCache.getSubscriptionsForEnvironmentAndEventType("playground", "my.event.type")).thenReturn(List.of(sub));
+            doThrow(new RejectedExecutionException("queue full")).when(executor).execute(any(Runnable.class));
+            when(eventWriter.send(anyString(), any(), any())).thenReturn(CompletableFuture.completedFuture(null));
+            doAnswer(invocation -> invocation.getArgument(0))
+                    .when(tracer)
+                    .withSpanInScope(any(), any());
+
+            var consumerRecord = new ConsumerRecord<>("published", 0, 0L, "key", PUBLISHED_EVENT);
+            var result = new PublishedMessageTask(consumerRecord, publishedMessageTaskFactory).call();
+
+            assertTrue(result.isDone());
+            assertTrue(result.isCompletedExceptionally());
+            assertFalse(result.isCancelled());
+
+            verify(deDuplicationService, never()).track(any(SubscriptionEventMessage.class));
+            // happy-path (1) -> REE (Rejected Execution Exception) -> sendFailed (2) -> REE
+            verify(eventWriter, times(2)).send(anyString(), any(), any());
+            verifyNoInteractions(meterRegistry);
+        }
+
+        // Filter successful -> sends PROCESSED SubscriptionEventMessage, enriches tracing without filter trace, tracks deduplication
+        @Test
+        void callShouldSendProcessedMessageTrackDeduplicationAndFinishSpanWhenFilterSucceeds() throws Exception {
+            var sub = HorizonTestHelper.createDefaultSubscriptionResource("playground", "my.event.type");
+            when(subscriberCache.getSubscriptionsForEnvironmentAndEventType("playground", "my.event.type")).thenReturn(List.of(sub));
+            when(publishedMessageTaskFactory.getTracer().getCurrentTracingHeaders()).thenReturn(Map.of("x-b3-traceid", "trace-1"));
+            when(eventWriter.send(anyString(), any(), any())).thenReturn(CompletableFuture.completedFuture(null));
+            when(metricsHelper.getRegistry()).thenReturn(new SimpleMeterRegistry());
+            doAnswer(invocation -> {
+                invocation.<Runnable>getArgument(0).run();
+                return null;
+            }).when(executor).execute(any());
+
+            var consumerRecord = new ConsumerRecord<>("published", 0, 0L, "key", PUBLISHED_EVENT);
+            var result = new PublishedMessageTask(consumerRecord, publishedMessageTaskFactory).call();
+
+            assertTrue(result.isDone());
+            assertFalse(result.isCompletedExceptionally());
+            assertFalse(result.isCancelled());
+            verify(publishedMessageTaskFactory.getOutgoingPayloadSizeHistogramCache()).recordMessage(any(SubscriptionEventMessage.class));
+            verify(span, never()).tag(eq(Constants.SELECTION_FILTER_TRACE), anyString());
+            verify(eventWriter).send(eq(EventRetentionTime.DEFAULT.getTopic()), argThat(msg ->
+                    msg instanceof SubscriptionEventMessage sem
+                            && sem.getStatus() == Status.PROCESSED
+                            && "trace-1".equals(sem.getAdditionalFields().get("x-b3-traceid"))), any());
+            verify(deDuplicationService).track(any(SubscriptionEventMessage.class));
+            verify(span).finish();
+        }
+
+        // Filter unsuccessful -> sends DROPPED StatusMessage, tags SELECTION_FILTER_TRACE on span, tracks deduplication
+        @Test
+        void callShouldSendDroppedStatusMessageTagFilterTraceAndTrackDeduplicationWhenFilterFails() throws Exception {
+            var sub = HorizonTestHelper.getSubscriptionResourceWithSelectionFilter("playground", "my.event.type");
+            when(subscriberCache.getSubscriptionsForEnvironmentAndEventType("playground", "my.event.type")).thenReturn(List.of(sub));
+            when(publishedMessageTaskFactory.getGalaxyConfig()).thenReturn(new GalaxyConfig());
+            when(eventWriter.send(anyString(), any(), any())).thenReturn(CompletableFuture.completedFuture(null));
+            when(metricsHelper.getRegistry()).thenReturn(new SimpleMeterRegistry());
+            doAnswer(invocation -> {
+                invocation.<Runnable>getArgument(0).run();
+                return null;
+            }).when(executor).execute(any());
+
+            var consumerRecord = new ConsumerRecord<>("published", 0, 0L, "key", PUBLISHED_EVENT);
+            var result = new PublishedMessageTask(consumerRecord, publishedMessageTaskFactory).call();
+
+            assertTrue(result.isDone());
+            assertFalse(result.isCompletedExceptionally());
+            assertFalse(result.isCancelled());
+            verify(span).tag(eq(Constants.SELECTION_FILTER_TRACE), anyString());
+            verify(eventWriter).send(eq(EventRetentionTime.DEFAULT.getTopic()), argThat(msg ->
+                    msg instanceof StatusMessage sm
+                            && sm.getStatus() == Status.DROPPED
+                            && sm.getAdditionalFields().containsKey(AdditionalFields.SELECTION_FILTER_TRACE.value)), any());
+            verify(deDuplicationService).track(any(SubscriptionEventMessage.class));
+            verify(span).finish();
+        }
+
+        // Primary send fails (ExecutionException | JsonProcessingException | InterruptedException),
+        // fallback FAILED StatusMessage succeeds -> tracks deduplication, returns completed Future
+        @Test
+        void callShouldSendFailedStatusMessageAndTrackDeduplicationWhenPrimarySendFails() throws Exception {
+            var sub = HorizonTestHelper.createDefaultSubscriptionResource("playground", "my.event.type");
+            when(subscriberCache.getSubscriptionsForEnvironmentAndEventType("playground", "my.event.type")).thenReturn(List.of(sub));
+            when(eventWriter.send(anyString(), any(SubscriptionEventMessage.class), any()))
+                    .thenReturn(CompletableFuture.failedFuture(new RuntimeException("kafka failure")));
+            when(eventWriter.send(anyString(), any(StatusMessage.class), any()))
+                    .thenReturn(CompletableFuture.completedFuture(null));
+            doAnswer(invocation -> {
+                invocation.<Runnable>getArgument(0).run();
+                return null;
+            }).when(executor).execute(any());
+
+            var consumerRecord = new ConsumerRecord<>("published", 0, 0L, "key", PUBLISHED_EVENT);
+            var result = new PublishedMessageTask(consumerRecord, publishedMessageTaskFactory).call();
+
+            assertTrue(result.isDone());
+            assertFalse(result.isCompletedExceptionally());
+            assertFalse(result.isCancelled());
+            verify(eventWriter).send(anyString(), argThat(msg ->
+                    msg instanceof StatusMessage sm && sm.getStatus() == Status.FAILED), any());
+            verify(deDuplicationService).track(any(SubscriptionEventMessage.class));
+        }
+
+        // Primary send fails AND sendFailedStatusMessage throws InterruptedException -> skips deduplication, returns failed Future
+        @Test
+        void callShouldReturnFailedResultAndSkipDeduplicationWhenFailedStatusSendIsInterrupted() throws Exception {
+            var sub = HorizonTestHelper.createDefaultSubscriptionResource("playground", "my.event.type");
+            var interruptedFuture = mock(CompletableFuture.class);
+            when(interruptedFuture.get()).thenThrow(new InterruptedException("interrupted"));
+            when(subscriberCache.getSubscriptionsForEnvironmentAndEventType("playground", "my.event.type")).thenReturn(List.of(sub));
+            when(eventWriter.send(anyString(), any(SubscriptionEventMessage.class), any()))
+                    .thenReturn(CompletableFuture.failedFuture(new RuntimeException("primary failure")));
+            when(eventWriter.send(anyString(), any(StatusMessage.class), any()))
+                    .thenReturn(interruptedFuture);
+            doAnswer(invocation -> {
+                invocation.<Runnable>getArgument(0).run();
+                return null;
+            }).when(executor).execute(any());
+
+            var consumerRecord = new ConsumerRecord<>("published", 0, 0L, "key", PUBLISHED_EVENT);
+            var result = new PublishedMessageTask(consumerRecord, publishedMessageTaskFactory).call();
+
+            assertTrue(result.isDone());
+            assertTrue(result.isCompletedExceptionally());
+            assertFalse(result.isCancelled());
+            verify(deDuplicationService, never()).track(any(SubscriptionEventMessage.class));
+        }
+
+        // Primary send fails AND sendFailedStatusMessage throws ExecutionException / JsonProcessingException -> skips deduplication, returns failed Future
+        @Test
+        void callShouldReturnFailedResultAndSkipDeduplicationWhenFailedStatusSendFails() throws Exception {
+            var sub = HorizonTestHelper.createDefaultSubscriptionResource("playground", "my.event.type");
+            when(subscriberCache.getSubscriptionsForEnvironmentAndEventType("playground", "my.event.type")).thenReturn(List.of(sub));
+            when(eventWriter.send(anyString(), any(SubscriptionEventMessage.class), any()))
+                    .thenReturn(CompletableFuture.failedFuture(new RuntimeException("primary failure")));
+            when(eventWriter.send(anyString(), any(StatusMessage.class), any()))
+                    .thenReturn(CompletableFuture.failedFuture(new RuntimeException("fallback failure")));
+            doAnswer(invocation -> {
+                invocation.<Runnable>getArgument(0).run();
+                return null;
+            }).when(executor).execute(any());
+
+            var consumerRecord = new ConsumerRecord<>("published", 0, 0L, "key", PUBLISHED_EVENT);
+            var result = new PublishedMessageTask(consumerRecord, publishedMessageTaskFactory).call();
+
+            assertTrue(result.isDone());
+            assertTrue(result.isCompletedExceptionally());
+            assertFalse(result.isCancelled());
+            verify(deDuplicationService, never()).track(any(SubscriptionEventMessage.class));
+        }
+
+        // Unchecked RuntimeException inside eventWriter send -> bypasses fallback send, skips deduplication, finishes span, returns failed Future
+        @Test
+        void callShouldReturnFailedResultAndFinishSpanWhenUncheckedExceptionOccursInMultiplexTask() throws Exception {
+            var sub = HorizonTestHelper.createDefaultSubscriptionResource("playground", "my.event.type");
+            when(subscriberCache.getSubscriptionsForEnvironmentAndEventType("playground", "my.event.type")).thenReturn(List.of(sub));
+            when(eventWriter.send(anyString(), any(), any())).thenThrow(new RuntimeException("unexpected runtime error"));
+
+            var consumerRecord = new ConsumerRecord<>("published", 0, 0L, "key", PUBLISHED_EVENT);
+            var result = new PublishedMessageTask(consumerRecord, publishedMessageTaskFactory).call();
+
+            assertTrue(result.isDone());
+            assertTrue(result.isCompletedExceptionally());
+            assertFalse(result.isCancelled());
+            verify(eventWriter, times(1)).send(anyString(), any(), any());
+            verify(deDuplicationService, never()).track(any(SubscriptionEventMessage.class));
+            verify(span).finish();
+            verifyNoInteractions(metricsHelper);
         }
     }
 }
