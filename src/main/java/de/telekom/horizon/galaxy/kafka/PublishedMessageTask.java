@@ -169,6 +169,7 @@ public class PublishedMessageTask implements Callable<CompletableFuture<Void>> {
         }
     }
 
+    //@formatter:off
     private CompletableFuture<Void> sendMessageToKafka(
             final SubscriptionEventMessage subscriptionEventMessage,
             final FilterEventMessageWrapper filteredEventMessage
@@ -190,6 +191,7 @@ public class PublishedMessageTask implements Callable<CompletableFuture<Void>> {
                                         }, mdcContext), span))
                 .thenRun(withMdcContext(() -> trackEventForDeduplication(subscriptionEventMessage), mdcContext));
     }
+    //@formatter:on
 
     /**
      * Tracks the {@link SubscriptionEventMessage} as multiplexed.
@@ -228,6 +230,7 @@ public class PublishedMessageTask implements Callable<CompletableFuture<Void>> {
      * @return CompletableFuture to track the status of the async publishing of the message
      * @throws RuntimeException thrown if an error occurs while sending the {@link Status#FAILED} status message
      */
+    //@formatter:off
     private CompletableFuture<SendResult<String, String>> sendFailedStatusMessage(SubscriptionEventMessage subscriptionEventMessage) {
         final var event = subscriptionEventMessage.getEvent();
         final var partialEvent = new PartialEvent(event.getId(), event.getType(), event.getTime());
@@ -238,13 +241,13 @@ public class PublishedMessageTask implements Callable<CompletableFuture<Void>> {
                             Objects.requireNonNullElse(subscriptionEventMessage.getEventRetentionTime(), EventRetentionTime.DEFAULT).getTopic(), statusMessage, tracer
                     )
                     // we want to make sure none of the callback stages run on KafkaProducer's Thread
-                    .whenCompleteAsync((res, ex) -> {
-                    }, executor);
+                    .whenCompleteAsync((res, ex) -> {}, executor);
         } catch (JsonProcessingException ex) {
             log.error("JsonProcessingException occurred while handling the exception from the multiplex task! Nack-ing event {}. May lead into nack-loop...", statusMessage, ex);
             throw new RuntimeException(ex);
         }
     }
+    //@formatter:on
 
     /**
      * Adds additional tracing tags such as multiplexed-from, subscriber-id, the result
@@ -279,6 +282,7 @@ public class PublishedMessageTask implements Callable<CompletableFuture<Void>> {
      * @param subscriptionEventMessage the event message sent to the kafka (if not dropped)
      * @return CompletableFuture       tracks the status of the async publishing of the message
      */
+    //@formatter:off
     private CompletableFuture<SendResult<String, String>> sendOutgoingMessage(FilterEventMessageWrapper subscriptionFilter, SubscriptionEventMessage subscriptionEventMessage) {
         var properties = tracer.getCurrentTracingHeaders();
 
@@ -314,12 +318,12 @@ public class PublishedMessageTask implements Callable<CompletableFuture<Void>> {
                             tracer
                     )
                     // we want to make sure none of the callback stages run on KafkaProducer's Thread
-                    .whenCompleteAsync((r, ex) -> {
-                    }, executor);
+                    .whenCompleteAsync((r, ex) -> {}, executor);
         } catch (JsonProcessingException ex) {
             return CompletableFuture.failedFuture(ex);
         }
     }
+    //@formatter:on
 
     private FilterEventMessageWrapper getFilteredEventMessage(final Subscription subscription, final JsonNode eventJsonPayload, final GalaxyConfig galaxyConfig) {
         var filterSpan = tracer.startScopedDebugSpan("apply filters");
