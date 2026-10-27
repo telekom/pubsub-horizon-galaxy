@@ -777,5 +777,62 @@ class PublishedMessageTaskTest {
         }
     }
 
+    @Nested
+    class JoiningPerSubscriptionFutures {
 
+        @BeforeEach
+        void setup() {
+            doAnswer(invocation -> invocation.getArgument(0))
+                    .when(tracer)
+                    .withSpanInScope(any(), any());
+            when(metricsHelper.getRegistry()).thenReturn(new SimpleMeterRegistry());
+            doAnswer(invocation -> {
+                invocation.<Runnable>getArgument(0).run();
+                return null;
+            }).when(executor).execute(any());
+        }
+
+        // All subscription futures complete normally -> returns true and tracks all subscriptions
+        @Test
+        void callShouldReturnSuccessfulResultWhenAllSubscriptionFuturesCompleteNormally() throws Exception {
+            var sub1 = HorizonTestHelper.createDefaultSubscriptionResource("playground", "my.event.type");
+            var sub2 = HorizonTestHelper.createDefaultSubscriptionResource("playground", "my.event.type");
+            when(subscriberCache.getSubscriptionsForEnvironmentAndEventType("playground", "my.event.type")).thenReturn(List.of(sub1, sub2));
+            when(eventWriter.send(anyString(), any(), any())).thenReturn(CompletableFuture.completedFuture(null));
+
+            var consumerRecord = new ConsumerRecord<>("published", 0, 0L, "key", PUBLISHED_EVENT);
+            var result = new PublishedMessageTask(consumerRecord, publishedMessageTaskFactory).call();
+
+            assertTrue(result.isDone());
+            assertFalse(result.isCompletedExceptionally());
+            assertFalse(result.isCancelled());
+            verify(deDuplicationService, times(2)).track(any(SubscriptionEventMessage.class));
+        }
+
+        // One subscription future completes exceptionally while sibling succeeds -> waits for all, tracks only succeeded sibling, returns false
+        @Test
+        void callShouldReturnFailedResultAndTrackOnlySuccessfulSiblingsWhenOneSubscriptionFutureFails() throws Exception {
+            var okSub = HorizonTestHelper.createDefaultSubscriptionResource("playground", "my.event.type");
+            var failSub = HorizonTestHelper.createDefaultSubscriptionResource("playground", "my.event.type");
+            var okSubId = okSub.getSpec().getSubscription().getSubscriptionId();
+            var failSubId = failSub.getSpec().getSubscription().getSubscriptionId();
+
+            when(subscriberCache.getSubscriptionsForEnvironmentAndEventType("playground", "my.event.type")).thenReturn(List.of(okSub, failSub));
+            when(eventWriter.send(anyString(), argThat(msg ->
+                    msg instanceof SubscriptionEventMessage sem && okSubId.equals(sem.getSubscriptionId())), any()))
+                    .thenReturn(CompletableFuture.completedFuture(null));
+            when(eventWriter.send(anyString(), argThat(msg ->
+                    msg instanceof SubscriptionEventMessage sem && failSubId.equals(sem.getSubscriptionId())), any()))
+                    .thenThrow(new RuntimeException("multiplex failure"));
+
+            var consumerRecord = new ConsumerRecord<>("published", 0, 0L, "key", PUBLISHED_EVENT);
+            var result = new PublishedMessageTask(consumerRecord, publishedMessageTaskFactory).call();
+
+            assertTrue(result.isDone());
+            assertTrue(result.isCompletedExceptionally());
+            assertFalse(result.isCancelled());
+            verify(deDuplicationService, times(1)).track(argThat(sem -> okSubId.equals(sem.getSubscriptionId())));
+            verify(deDuplicationService, never()).track(argThat(sem -> failSubId.equals(sem.getSubscriptionId())));
+        }
+    }
 }
