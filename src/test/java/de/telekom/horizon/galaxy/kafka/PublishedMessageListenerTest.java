@@ -142,9 +142,9 @@ class PublishedMessageListenerTest {
     }
 
     @Nested
-    class TaskSubmissionLoopA1Test {
+    class TaskSubmissionLoopTest {
 
-        // Branch A1.1 — Empty Batch (consumerRecords.isEmpty())
+        // Empty Batch (consumerRecords.isEmpty())
         @Test
         void onMessageShouldSkipSubmissionLoopWhenBatchIsEmpty() {
             listener.onMessage(List.of(), acknowledgment);
@@ -154,7 +154,7 @@ class PublishedMessageListenerTest {
             verify(acknowledgment, never()).nack(anyInt(), any(Duration.class));
         }
 
-        // Branch A1.2 — All Tasks Submitted Successfully
+        // All Tasks Submitted Successfully
         @Test
         void onMessageShouldSubmitAllTasksWhenPoolHasCapacity() {
             var record0 = new ConsumerRecord<>("topic", 0, 0L, "key0", "value0");
