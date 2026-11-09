@@ -12,17 +12,21 @@ import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentMatchers;
 import org.springframework.kafka.support.Acknowledgment;
 
 import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.SynchronousQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
@@ -37,6 +41,7 @@ class PublishedMessageListenerTest {
     private Acknowledgment acknowledgment;
     private PublishedMessageListener listener;
     private Executor executor;
+    private int kafkaMaxPollIntervalMs;
 
     @BeforeEach
     void setUp() {
@@ -48,6 +53,7 @@ class PublishedMessageListenerTest {
         acknowledgment = mock(Acknowledgment.class);
         Span span = mock(Span.class);
         executor = mock(ExecutorService.class);
+        kafkaMaxPollIntervalMs = 300_000;
 
         // Make tracer.withCurrentTraceContext pass through the callable
         doAnswer(invocation -> {
@@ -57,7 +63,7 @@ class PublishedMessageListenerTest {
         when(tracer.<CompletableFuture<Void>>withCurrentContext(any())).thenAnswer(invocation -> invocation.getArgument(0));
         when(tracer.startSpanFromKafkaHeaders(any(), any())).thenReturn(span);
 
-        listener = new PublishedMessageListener(factory, tracer, galaxyConfig, meterRegistry, executor);
+        listener = new PublishedMessageListener(factory, tracer, galaxyConfig, meterRegistry, executor, kafkaMaxPollIntervalMs);
     }
 
     @Test
@@ -88,7 +94,7 @@ class PublishedMessageListenerTest {
 
     @Test
     void onMessageShouldNackAtEarliestFailureWhenBothRejectionAndTaskFailure() {
-        var smallPoolListener = new PublishedMessageListener(factory, tracer, galaxyConfig, meterRegistry, executor);
+        var smallPoolListener = new PublishedMessageListener(factory, tracer, galaxyConfig, meterRegistry, executor, kafkaMaxPollIntervalMs);
 
         var record1 = new ConsumerRecord<>("topic", 0, 0L, "key1", "value1");
         var record2 = new ConsumerRecord<>("topic", 0, 1L, "key2", "value2");
@@ -195,7 +201,7 @@ class PublishedMessageListenerTest {
             });
 
             try (var executor = new ThreadPoolExecutor(1, 1, 0L, TimeUnit.MILLISECONDS, new SynchronousQueue<>())) {
-                var saturatedListener = new PublishedMessageListener(factory, tracer, galaxyConfig, meterRegistry, executor);
+                var saturatedListener = new PublishedMessageListener(factory, tracer, galaxyConfig, meterRegistry, executor, kafkaMaxPollIntervalMs);
                 assertThrows(RejectedExecutionException.class, () -> saturatedListener.onMessage(List.of(record0, record1, record2), acknowledgment));
             }
 
@@ -205,6 +211,236 @@ class PublishedMessageListenerTest {
             verify(rejectedTask, never()).call();
             verify(acknowledgment, never()).acknowledge();
             verify(acknowledgment, never()).nack(anyInt(), any());
+        }
+    }
+
+    @Nested
+    class TaskCompletionAndFailureDetectionLoopA2Test {
+
+        // All tasks return isSuccessful() == true
+        @Test
+        void onMessageShouldContinueAndAcknowledgeWhenAllTasksSucceed() {
+            var record0 = new ConsumerRecord<>("topic", 0, 0L, "key0", "value0");
+            var record1 = new ConsumerRecord<>("topic", 0, 1L, "key1", "value1");
+            var task0 = mock(PublishedMessageTask.class);
+            var task1 = mock(PublishedMessageTask.class);
+
+            when(factory.newTask(record0)).thenReturn(task0);
+            when(factory.newTask(record1)).thenReturn(task1);
+            when(task0.call()).thenReturn(CompletableFuture.completedFuture(null));
+            when(task1.call()).thenReturn(CompletableFuture.completedFuture(null));
+
+            listener.onMessage(List.of(record0, record1), acknowledgment);
+
+            verify(task0).call();
+            verify(task1).call();
+            verify(acknowledgment).acknowledge();
+            verify(acknowledgment, never()).nack(anyInt(), any(Duration.class));
+        }
+
+        // Task returns isSuccessful() == false (first + subsequent failure, waits for remaining tasks)
+        @Test
+        void onMessageShouldRecordFirstFailureIndexAndWaitForAllRemainingTasks() {
+            var record0 = new ConsumerRecord<>("topic", 0, 0L, "key0", "value0");
+            var record1 = new ConsumerRecord<>("topic", 0, 1L, "key1", "value1");
+            var record2 = new ConsumerRecord<>("topic", 0, 2L, "key2", "value2");
+            var task0 = mock(PublishedMessageTask.class);
+            var task1 = mock(PublishedMessageTask.class);
+            var task2 = mock(PublishedMessageTask.class);
+            var task2Completed = new AtomicBoolean(false);
+
+            when(factory.newTask(record0)).thenReturn(task0);
+            when(factory.newTask(record1)).thenReturn(task1);
+            when(factory.newTask(record2)).thenReturn(task2);
+
+            when(task0.call()).thenReturn(CompletableFuture.completedFuture(null));
+            when(task1.call()).thenReturn(CompletableFuture.failedFuture(new Exception("task 1: test exception"))); // first failure at index 1
+            when(task2.call()).thenAnswer(invocation -> {
+                Thread.sleep(100);
+                task2Completed.set(true);
+                return CompletableFuture.failedFuture(new Exception("task 2: test exception")); // subsequent failure at index 2
+            });
+
+            listener.onMessage(List.of(record0, record1, record2), acknowledgment);
+
+            assertTrue(task2Completed.get(), "Loop must not break on Result(false) and must wait for remaining tasks");
+            verify(acknowledgment, never()).acknowledge();
+            verify(acknowledgment).nack(eq(1), eq(Duration.ofMillis(1000)));
+        }
+
+        // Future.get() throws ExecutionException
+        @Test
+        void onMessageShouldWaitForAllAndNackWhenTaskThrowsExecutionException() {
+            var record0 = new ConsumerRecord<>("topic", 0, 0L, "key0", "value0");
+            var record1 = new ConsumerRecord<>("topic", 0, 1L, "key1", "value1");
+            var task0 = mock(PublishedMessageTask.class);
+            var task1 = mock(PublishedMessageTask.class);
+
+            when(factory.newTask(record0)).thenReturn(task0);
+            when(factory.newTask(record1)).thenReturn(task1);
+            when(task0.call()).thenThrow(new RuntimeException("Uncaught task failure"));
+            when(task1.call()).thenAnswer(invocation -> {
+                Thread.sleep(100);
+                return CompletableFuture.completedFuture(null);
+            });
+
+                listener.onMessage(List.of(record0, record1), acknowledgment);
+
+                assertFalse(Thread.currentThread().isInterrupted());
+                verify(acknowledgment, never()).acknowledge();
+                verify(acknowledgment).nack(eq(0), eq(Duration.ofMillis(1000)));
+
+        }
+
+        // Future.get() throws ExecutionException after an earlier failure (retains earlier taskFailureIndex)
+        @Test
+        void onMessageShouldRetainEarlierFailureIndexWhenSubsequentTaskThrowsExecutionException() {
+            var record0 = new ConsumerRecord<>("topic", 0, 0L, "key0", "value0");
+            var record1 = new ConsumerRecord<>("topic", 0, 1L, "key1", "value1");
+            var task0 = mock(PublishedMessageTask.class);
+            var task1 = mock(PublishedMessageTask.class);
+
+            when(factory.newTask(record0)).thenReturn(task0);
+            when(factory.newTask(record1)).thenReturn(task1);
+            when(task0.call()).thenReturn(CompletableFuture.failedFuture(new Exception("test"))); // failure at index 0
+            when(task1.call()).thenThrow(new RuntimeException("Uncaught failure at index 1"));
+
+            listener.onMessage(List.of(record0, record1), acknowledgment);
+
+            verify(acknowledgment, never()).acknowledge();
+            verify(acknowledgment).nack(eq(0), eq(Duration.ofMillis(1000)));
+        }
+
+        // Future.get() throws InterruptedException (re-interrupts thread and breaks)
+        @Test
+        void onMessageShouldRestoreInterruptFlagAndBreakWhenInterruptedWhileWaiting() throws InterruptedException {
+            try (var singleThreadExecutor = Executors.newSingleThreadExecutor()) {
+                reset(executor);
+                doAnswer(invocation -> {
+                    singleThreadExecutor.execute(invocation.getArgument(0));
+                    return null;
+                }).when(executor).execute(any());
+                var record0 = new ConsumerRecord<>("topic", 0, 0L, "key0", "value0");
+                var task0 = mock(PublishedMessageTask.class);
+                var releaseTask0 = new CountDownLatch(1);
+                var interruptLatch = new CountDownLatch(1);
+
+                when(factory.newTask(record0)).thenReturn(task0);
+                when(task0.call()).thenAnswer(invocation -> {
+                    interruptLatch.countDown();
+                    releaseTask0.await();
+                    return CompletableFuture.completedFuture(null);
+                });
+
+                try {
+                    var thread = new Thread(() -> listener.onMessage(List.of(record0), acknowledgment));
+                    thread.start();
+
+                    interruptLatch.await();
+                    thread.interrupt();
+                    thread.join();
+
+                    assertTrue(thread.isInterrupted(), "Listener must restore interrupt status");
+                    verify(acknowledgment, never()).acknowledge();
+                    verify(acknowledgment).nack(eq(0), eq(Duration.ofMillis(1000)));
+                } finally {
+                    releaseTask0.countDown();
+                }
+            }
+        }
+    }
+
+    @Nested
+    class NackIndexResolutionAndAcknowledgmentTest {
+
+        @Test
+        void onMessageShouldAcknowledgeBatchAndNotIncrementNackCountersWhenNoRejectionOrTaskFailure() {
+            var record = new ConsumerRecord<>("topic", 0, 0L, "key", "value");
+            var task = mock(PublishedMessageTask.class);
+            when(factory.newTask(record)).thenReturn(task);
+            when(task.call()).thenReturn(CompletableFuture.completedFuture(null));
+
+            listener.onMessage(List.of(record), acknowledgment);
+
+            verify(acknowledgment).acknowledge();
+            verify(acknowledgment, never()).nack(anyInt(), any(Duration.class));
+            assertEquals(0.0, meterRegistry.get("pubsub.kafka.listener.nacks").counter().count());
+            assertEquals(0.0, meterRegistry.get("pubsub.kafka.listener.nacks.task_failure").counter().count());
+        }
+
+        @Test
+        void onMessageShouldThrowWhenOnlyRejectionOccurs() {
+            final var maxPollInterval = 3_000;
+            try (var singleThreadExecutor = new ThreadPoolExecutor(1, 1, 10_000, TimeUnit.MILLISECONDS, new SynchronousQueue<>())) {
+                var smallPoolListener = new PublishedMessageListener(factory, tracer, galaxyConfig, meterRegistry, singleThreadExecutor, maxPollInterval);
+
+                var record0 = new ConsumerRecord<>("topic", 0, 0L, "key0", "value0");
+                var record1 = new ConsumerRecord<>("topic", 0, 1L, "key1", "value1");
+                var task0 = mock(PublishedMessageTask.class);
+                var task1 = mock(PublishedMessageTask.class);
+
+                when(factory.newTask(record0)).thenReturn(task0);
+                when(factory.newTask(record1)).thenReturn(task1);
+                when(task0.call()).thenAnswer(invocation -> {
+                    Thread.sleep(200);
+                    return CompletableFuture.completedFuture(null);
+                });
+
+                assertThrows(RejectedExecutionException.class, () -> smallPoolListener.onMessage(List.of(record0, record1), acknowledgment));
+
+                verify(acknowledgment, never()).acknowledge();
+                verify(acknowledgment, never()).nack(anyInt(), any(Duration.class));
+                assertEquals(0.0, meterRegistry.get("pubsub.kafka.listener.nacks").counter().count());
+                assertEquals(0.0, meterRegistry.get("pubsub.kafka.listener.nacks.task_failure").counter().count());
+            }
+        }
+
+        // Task failure without rejection
+        @Test
+        void onMessageShouldNackAtTaskFailureIndexAndIncrementBothCountersWhenTaskFailsWithoutRejection() {
+            var record0 = new ConsumerRecord<>("topic", 0, 0L, "key0", "value0");
+            var record1 = new ConsumerRecord<>("topic", 0, 1L, "key1", "value1");
+            var task0 = mock(PublishedMessageTask.class);
+            var task1 = mock(PublishedMessageTask.class);
+
+            when(factory.newTask(record0)).thenReturn(task0);
+            when(factory.newTask(record1)).thenReturn(task1);
+            when(task0.call()).thenReturn(CompletableFuture.completedFuture(null));
+            when(task1.call()).thenReturn(CompletableFuture.failedFuture(new Exception("test")));
+
+            listener.onMessage(List.of(record0, record1), acknowledgment);
+
+            verify(acknowledgment, never()).acknowledge();
+            verify(acknowledgment).nack(eq(1), eq(Duration.ofMillis(galaxyConfig.getNackSleepDurationMs())));
+            assertEquals(1.0, meterRegistry.get("pubsub.kafka.listener.nacks").counter().count());
+            assertEquals(1.0, meterRegistry.get("pubsub.kafka.listener.nacks.task_failure").counter().count());
+        }
+
+        // Task failure with subsequent rejection
+        @Test
+        void onMessageShouldThrowWhenBothTaskFailureAndRejectionOccur() {
+            final var maxPollInterval = 3_000;
+            try (var singleThreadExecutor = new ThreadPoolExecutor(1, 1, 10_000, TimeUnit.MILLISECONDS, new SynchronousQueue<>())) {
+                var smallPoolListener = new PublishedMessageListener(factory, tracer, galaxyConfig, meterRegistry, singleThreadExecutor, maxPollInterval);
+
+                var record0 = new ConsumerRecord<>("topic", 0, 0L, "key0", "value0");
+                var record1 = new ConsumerRecord<>("topic", 0, 1L, "key1", "value1");
+                var task0 = mock(PublishedMessageTask.class);
+                var task1 = mock(PublishedMessageTask.class);
+
+                when(factory.newTask(record0)).thenReturn(task0);
+                when(factory.newTask(record1)).thenReturn(task1);
+                when(task0.call()).thenAnswer(invocation -> {
+                    Thread.sleep(200);
+                    return CompletableFuture.failedFuture(new Exception("test"));
+                });
+
+                assertThrows(RejectedExecutionException.class, () -> smallPoolListener.onMessage(List.of(record0, record1), acknowledgment));
+                verify(acknowledgment, never()).acknowledge();
+                verify(acknowledgment, never()).nack(anyInt(), any(Duration.class));
+                assertEquals(0.0, meterRegistry.get("pubsub.kafka.listener.nacks").counter().count());
+                assertEquals(0.0, meterRegistry.get("pubsub.kafka.listener.nacks.task_failure").counter().count());
+            }
         }
     }
 }
