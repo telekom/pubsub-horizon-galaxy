@@ -67,16 +67,14 @@ public class KafkaConsumerConfig {
                                                              GalaxyConfig galaxyConfig,
                                                              MeterRegistry meterRegistry,
                                                              Executor messageListenerExecutor,
-                                                             ConsumerFactory<String,String> consumerFactory) {
+                                                             KafkaProperties kafkaProperties) {
         return new PublishedMessageListener(
                 publishedMessageTaskFactory,
                 horizonTracer,
                 galaxyConfig,
                 meterRegistry,
                 messageListenerExecutor,
-                (Integer) consumerFactory.getConfigurationProperties().getOrDefault(
-                        ConsumerConfig.MAX_POLL_INTERVAL_MS_CONFIG,
-                        ConsumerConfig.configDef().defaultValues().get(ConsumerConfig.MAX_POLL_INTERVAL_MS_CONFIG))
+                kafkaProperties.getMaxPollIntervalMs()
         );
     }
 
