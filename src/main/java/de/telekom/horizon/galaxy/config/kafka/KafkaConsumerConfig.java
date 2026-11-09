@@ -12,6 +12,7 @@ import de.telekom.horizon.galaxy.kafka.PublishedMessageListener;
 import de.telekom.horizon.galaxy.kafka.PublishedMessageTaskFactory;
 import io.micrometer.core.instrument.MeterRegistry;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.common.errors.AuthenticationException;
 import org.apache.kafka.common.errors.AuthorizationException;
 import org.apache.kafka.common.errors.FencedInstanceIdException;
@@ -32,7 +33,6 @@ import org.springframework.kafka.listener.MessageListenerContainer;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 
 import java.util.concurrent.Executor;
-import java.util.concurrent.ThreadPoolExecutor;
 
 @Configuration
 @Slf4j
@@ -66,8 +66,18 @@ public class KafkaConsumerConfig {
                                                              HorizonTracer horizonTracer,
                                                              GalaxyConfig galaxyConfig,
                                                              MeterRegistry meterRegistry,
-                                                             Executor messageListenerExecutor) {
-        return new PublishedMessageListener(publishedMessageTaskFactory, horizonTracer, galaxyConfig, meterRegistry, messageListenerExecutor);
+                                                             Executor messageListenerExecutor,
+                                                             ConsumerFactory<String,String> consumerFactory) {
+        return new PublishedMessageListener(
+                publishedMessageTaskFactory,
+                horizonTracer,
+                galaxyConfig,
+                meterRegistry,
+                messageListenerExecutor,
+                (Integer) consumerFactory.getConfigurationProperties().getOrDefault(
+                        ConsumerConfig.MAX_POLL_INTERVAL_MS_CONFIG,
+                        ConsumerConfig.configDef().defaultValues().get(ConsumerConfig.MAX_POLL_INTERVAL_MS_CONFIG))
+        );
     }
 
     /**
@@ -114,9 +124,7 @@ public class KafkaConsumerConfig {
         return new ThreadPoolTaskExecutorBuilder()
                 .corePoolSize(galaxyConfig.getMessageListenerThreadPoolFixedSize())
                 .maxPoolSize(galaxyConfig.getMessageListenerThreadPoolFixedSize())
-                .customizers(taskExecutor -> {
-                    taskExecutor.setPrestartAllCoreThreads(true);
-                })
+                .customizers(taskExecutor -> taskExecutor.setPrestartAllCoreThreads(true))
                 .threadNamePrefix("kafka-listener-")
                 .build();
     }

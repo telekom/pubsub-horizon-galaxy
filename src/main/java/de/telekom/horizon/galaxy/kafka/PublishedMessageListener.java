@@ -23,6 +23,8 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 
@@ -45,13 +47,14 @@ public class PublishedMessageListener extends AbstractConsumerSeekAware implemen
     private final Counter nackCounter;
     private final Counter nackDueToTaskFailureCounter;
     private final Executor messageListenerExecutor;
+    private final int kafkaMaxPollIntervalMs;
 
     public PublishedMessageListener(
             PublishedMessageTaskFactory publishedMessageTaskFactory,
             HorizonTracer horizonTracer,
             GalaxyConfig galaxyConfig,
             MeterRegistry meterRegistry,
-            Executor messageListenerExecutor
+            Executor messageListenerExecutor, int kafkaMaxPollIntervalMs
     ) {
         super();
         this.kafkaNackSleepDuration = Duration.ofMillis(galaxyConfig.getNackSleepDurationMs());
@@ -65,6 +68,7 @@ public class PublishedMessageListener extends AbstractConsumerSeekAware implemen
                 .description("Nacks due to task execution failure")
                 .register(meterRegistry);
         this.messageListenerExecutor = messageListenerExecutor;
+        this.kafkaMaxPollIntervalMs = kafkaMaxPollIntervalMs;
     }
 
     /**
@@ -122,7 +126,7 @@ public class PublishedMessageListener extends AbstractConsumerSeekAware implemen
         try {
             CompletableFuture
                     .allOf(messagePublishingStatuses.toArray(new CompletableFuture[0]))
-                    .get();
+                    .get(kafkaMaxPollIntervalMs, TimeUnit.MILLISECONDS);
 
             final var failedIndexValue = failedIndex.get();
             if (failedIndexValue != NO_NACK_INDEX) {
@@ -135,11 +139,16 @@ public class PublishedMessageListener extends AbstractConsumerSeekAware implemen
             log.error("Interrupted while waiting for message publishing", e);
             Thread.currentThread().interrupt();
             nackCounter.increment();
+            acknowledgment.nack(0, kafkaNackSleepDuration);
             throw new RuntimeException(e);
         } catch (ExecutionException e) {
             log.warn("Unexpected ExecutionException while waiting for message publishing; must never happen", e);
             nackCounter.increment();
+            acknowledgment.nack(0, kafkaNackSleepDuration);
             throw new RuntimeException(e);
+        } catch (TimeoutException e) {
+            // The handling is done via max.poll.inverval.ms timeout behavior, here we free the thread from unbounded waiting
+            log.error("Timed out while waiting for all messages to be processed and published", e);
         }
     }
 
