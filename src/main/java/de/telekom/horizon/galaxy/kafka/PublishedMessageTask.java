@@ -118,16 +118,25 @@ public class PublishedMessageTask implements Callable<CompletableFuture<Void>> {
             final var eventJsonPayload = eventData != null && (dataContentType == null || jsonMediaTypeRegex.matcher(dataContentType.trim()).matches()) ?
                     parseEventData(eventData)
                     : null;
+
+            log.info("Found {} recipients for event.", subscriptionResources.size());
+
             final var messagePublishingTasks = new ArrayList<CompletableFuture<Void>>(subscriptionResources.size());
             for (var subscriptionResource : subscriptionResources) {
                 final var subscription = subscriptionResource.getSpec().getSubscription();
                 final var subscriptionId = subscription.getSubscriptionId();
-                if (deDuplicationService.isDuplicate(publishedEventMessage, subscriptionId)) {
+                final FilterEventMessageWrapper filteredEventMessage;
+                try {
+                    if (deDuplicationService.isDuplicate(publishedEventMessage, subscriptionId)) {
+                        continue;
+                    }
+
+                    log.info("Applying filters.");
+                    filteredEventMessage = getFilteredEventMessage(subscription, eventJsonPayload, galaxyConfig);
+                } catch (Exception e) {
+                    messagePublishingTasks.add(CompletableFuture.failedFuture(e));
                     continue;
                 }
-
-                log.info("Applying filters.");
-                final var filteredEventMessage = getFilteredEventMessage(subscription, eventJsonPayload, galaxyConfig);
 
                 log.info("Creating SubscriptionEventMessage for subscription {}", subscriptionId);
                 final SubscriptionEventMessage subscriptionEventMessage;
