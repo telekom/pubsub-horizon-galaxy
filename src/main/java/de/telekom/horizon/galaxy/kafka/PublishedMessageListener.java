@@ -121,7 +121,6 @@ public class PublishedMessageListener extends AbstractConsumerSeekAware implemen
                                 .exceptionally(ex -> {
                                     log.warn("Unexpected exception in message publishing task", ex);
                                     updateFailedIndex(failedIndex, messageInBatchIndex);
-                                    nackDueToTaskFailureCounter.increment();
                                     return null;
                                 }));
             } catch (RejectedExecutionException ex) {
@@ -139,6 +138,7 @@ public class PublishedMessageListener extends AbstractConsumerSeekAware implemen
             final var failedIndexValue = failedIndex.get();
             if (failedIndexValue != NO_NACK_INDEX) {
                 acknowledgment.nack(failedIndexValue, kafkaNackSleepDuration);
+                nackDueToTaskFailureCounter.increment();
                 nackCounter.increment();
                 return;
             }
@@ -155,6 +155,7 @@ public class PublishedMessageListener extends AbstractConsumerSeekAware implemen
         } catch (TimeoutException e) {
             // The handling is done via max.poll.inverval.ms timeout behavior, here we free the thread from unbounded waiting
             log.error("Timed out while waiting for all messages to be processed and published", e);
+            nackCounter.increment();
             acknowledgment.nack(0, kafkaNackSleepDuration);
         }
     }
