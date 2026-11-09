@@ -112,6 +112,7 @@ public abstract class AbstractIntegrationTest {
         registry.add("horizon.cache.kubernetesServiceDns", () -> "");
         registry.add("horizon.cache.deDuplication.enabled", () -> true);
         registry.add("kubernetes.enabled", () -> false);
+        registry.add("horizon.kafka.maxPollIntervalMs", () -> 60000);
     }
 
     public ConsumerRecord<String, String> pollForRecord(int timeout, TimeUnit timeUnit) throws InterruptedException {

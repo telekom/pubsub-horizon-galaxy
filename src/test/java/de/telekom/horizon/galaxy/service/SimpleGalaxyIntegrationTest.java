@@ -33,10 +33,6 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(HazelcastTestInstance.class)
-@DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
-@TestPropertySource(properties = {
-        "horizon.kafka.maxPollIntervalMs=3000"
-})
 class SimpleGalaxyIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
@@ -49,7 +45,6 @@ class SimpleGalaxyIntegrationTest extends AbstractIntegrationTest {
     private final static String TRACING_HEADER_NAME = "x-b3-traceid";
 
     @Test
-    @DirtiesContext(methodMode = DirtiesContext.MethodMode.BEFORE_METHOD)
     void testDefaultBehaviour() throws InterruptedException, JsonProcessingException {
         //given
         SubscriptionResource subscription = HorizonTestHelper.createDefaultSubscriptionResource(TEST_ENVIRONMENT, getEventType());
@@ -99,7 +94,6 @@ class SimpleGalaxyIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    @DirtiesContext(methodMode = DirtiesContext.MethodMode.BEFORE_METHOD)
     void testConsumerRecoversWhenMaxPollIntervalExceeded() throws InterruptedException, JsonProcessingException {
         // given
         SubscriptionResource subscription = HorizonTestHelper.createDefaultSubscriptionResource(TEST_ENVIRONMENT, getEventType());
@@ -109,7 +103,7 @@ class SimpleGalaxyIntegrationTest extends AbstractIntegrationTest {
                 .thenAnswer(invocation -> {
                     if (firstCall.compareAndSet(true, false)) {
                         // Exceed max.poll.interval.ms so the consumer is removed from the consumer group
-                        Thread.sleep(6_000L);
+                        Thread.sleep(70_000L);
                     }
                     return List.of(subscription);
                 });
@@ -120,7 +114,7 @@ class SimpleGalaxyIntegrationTest extends AbstractIntegrationTest {
         // when: first message triggers slow processing that exceeds max.poll.interval.ms
         simulateNewPublishedEvent(firstMessage);
 
-        ConsumerRecord<String, String> firstReceived = pollForRecord(15, TimeUnit.SECONDS);
+        ConsumerRecord<String, String> firstReceived = pollForRecord(75, TimeUnit.SECONDS);
         assertNotNull(firstReceived);
 
         SubscriptionEventMessage firstMultiplexed = objectMapper.readValue(firstReceived.value(), SubscriptionEventMessage.class);
