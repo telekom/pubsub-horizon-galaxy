@@ -20,16 +20,23 @@ import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.test.annotation.DirtiesContext;
+import org.springframework.test.context.TestPropertySource;
 
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(HazelcastTestInstance.class)
+@DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
+@TestPropertySource(properties = {
+        "horizon.kafka.maxPollIntervalMs=3000"
+})
 class SimpleGalaxyIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
@@ -42,6 +49,7 @@ class SimpleGalaxyIntegrationTest extends AbstractIntegrationTest {
     private final static String TRACING_HEADER_NAME = "x-b3-traceid";
 
     @Test
+    @DirtiesContext(methodMode = DirtiesContext.MethodMode.BEFORE_METHOD)
     void testDefaultBehaviour() throws InterruptedException, JsonProcessingException {
         //given
         SubscriptionResource subscription = HorizonTestHelper.createDefaultSubscriptionResource(TEST_ENVIRONMENT, getEventType());
@@ -50,21 +58,17 @@ class SimpleGalaxyIntegrationTest extends AbstractIntegrationTest {
         String traceId = UUID.randomUUID().toString();
         String eventId = UUID.randomUUID().toString();
         String messageUuid = UUID.randomUUID().toString();
-
         String testEvent = """
                 {
                     "mydummydata": "foobar"
                 }
                 """;
-
-        //when
         PublishedEventMessage message = new PublishedEventMessage();
         message.setUuid(messageUuid);
         message.setEnvironment(TEST_ENVIRONMENT);
         message.setHttpHeaders(
                 Map.of("X-Pandora-Type", List.of("Test"), TRACING_HEADER_NAME, List.of(traceId))
         );
-
         Event event = new Event();
         event.setType(getEventType());
         event.setId(eventId);
@@ -92,5 +96,78 @@ class SimpleGalaxyIntegrationTest extends AbstractIntegrationTest {
 
         // atm no other possibility visible to check called track method as to check for isduplicate after simple integration test here
         assertTrue(deDuplicationService.isDuplicate(message, subscription.getSpec().getSubscription().getSubscriptionId()));
+    }
+
+    @Test
+    @DirtiesContext(methodMode = DirtiesContext.MethodMode.BEFORE_METHOD)
+    void testConsumerRecoversWhenMaxPollIntervalExceeded() throws InterruptedException, JsonProcessingException {
+        // given
+        SubscriptionResource subscription = HorizonTestHelper.createDefaultSubscriptionResource(TEST_ENVIRONMENT, getEventType());
+        AtomicBoolean firstCall = new AtomicBoolean(true);
+
+        when(subscriptionCacheMock.getSubscriptionsForEnvironmentAndEventType(TEST_ENVIRONMENT, getEventType()))
+                .thenAnswer(invocation -> {
+                    if (firstCall.compareAndSet(true, false)) {
+                        // Exceed max.poll.interval.ms so the consumer is removed from the consumer group
+                        Thread.sleep(6_000L);
+                    }
+                    return List.of(subscription);
+                });
+
+        PublishedEventMessage firstMessage = createPublishedEventMessage();
+        PublishedEventMessage secondMessage = createPublishedEventMessage();
+
+        // when: first message triggers slow processing that exceeds max.poll.interval.ms
+        simulateNewPublishedEvent(firstMessage);
+
+        ConsumerRecord<String, String> firstReceived = pollForRecord(15, TimeUnit.SECONDS);
+        assertNotNull(firstReceived);
+
+        SubscriptionEventMessage firstMultiplexed = objectMapper.readValue(firstReceived.value(), SubscriptionEventMessage.class);
+        assertEquals(Status.PROCESSED, firstMultiplexed.getStatus());
+        assertEquals(firstMessage.getUuid(), firstMultiplexed.getMultiplexedFrom());
+
+        // when: second message is published after consumer was removed from group and polls again
+        simulateNewPublishedEvent(secondMessage);
+
+        // then: consumer rejoins the group on poll and processes the new message
+        ConsumerRecord<String, String> secondReceived = pollForRecord(15, TimeUnit.SECONDS);
+        assertNotNull(secondReceived);
+
+        SubscriptionEventMessage secondMultiplexed = objectMapper.readValue(secondReceived.value(), SubscriptionEventMessage.class);
+        if (firstMessage.getUuid().equals(secondMultiplexed.getMultiplexedFrom())) {
+            // If uncommitted first message was redelivered after rejoin, poll the next record for the second message
+            secondReceived = pollForRecord(15, TimeUnit.SECONDS);
+            assertNotNull(secondReceived);
+            secondMultiplexed = objectMapper.readValue(secondReceived.value(), SubscriptionEventMessage.class);
+        }
+
+        assertEquals(Status.PROCESSED, secondMultiplexed.getStatus());
+        assertEquals(secondMessage.getUuid(), secondMultiplexed.getMultiplexedFrom());
+        assertEquals(secondMessage.getEvent().getId(), secondMultiplexed.getEvent().getId());
+    }
+
+    private PublishedEventMessage createPublishedEventMessage() {
+        String traceId = UUID.randomUUID().toString();
+        String eventId = UUID.randomUUID().toString();
+        String messageUuid = UUID.randomUUID().toString();
+        String testEvent = """
+                {
+                    "mydummydata": "foobar"
+                }
+                """;
+        PublishedEventMessage message = new PublishedEventMessage();
+        message.setUuid(messageUuid);
+        message.setEnvironment(TEST_ENVIRONMENT);
+        message.setHttpHeaders(
+                Map.of("X-Pandora-Type", List.of("Test"), TRACING_HEADER_NAME, List.of(traceId))
+        );
+        Event event = new Event();
+        event.setType(getEventType());
+        event.setId(eventId);
+        event.setData(testEvent);
+        message.setEvent(event);
+        message.setAdditionalFields(Map.of(TRACING_HEADER_NAME, traceId));
+        return message;
     }
 }
