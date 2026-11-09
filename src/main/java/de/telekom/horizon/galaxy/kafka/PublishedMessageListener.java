@@ -23,6 +23,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -47,14 +48,15 @@ public class PublishedMessageListener extends AbstractConsumerSeekAware implemen
     private final Counter nackCounter;
     private final Counter nackDueToTaskFailureCounter;
     private final Executor messageListenerExecutor;
-    private final int kafkaMaxPollIntervalMs;
+    private final int maxProcessingInterval;
 
     public PublishedMessageListener(
             PublishedMessageTaskFactory publishedMessageTaskFactory,
             HorizonTracer horizonTracer,
             GalaxyConfig galaxyConfig,
             MeterRegistry meterRegistry,
-            Executor messageListenerExecutor, int kafkaMaxPollIntervalMs
+            Executor messageListenerExecutor,
+            int kafkaMaxPollIntervalMs
     ) {
         super();
         this.kafkaNackSleepDuration = Duration.ofMillis(galaxyConfig.getNackSleepDurationMs());
@@ -68,20 +70,20 @@ public class PublishedMessageListener extends AbstractConsumerSeekAware implemen
                 .description("Nacks due to task execution failure")
                 .register(meterRegistry);
         this.messageListenerExecutor = messageListenerExecutor;
-        this.kafkaMaxPollIntervalMs = kafkaMaxPollIntervalMs;
+        this.maxProcessingInterval = kafkaMaxPollIntervalMs;
     }
 
     /**
      * Handles a batch of messages received from Kafka.
      * The processing logic is as follows:
      * <ul>
-     *     <li> Messages are sequentially processed, multiplexed and are submitted to the {@code EventWriter} </li>
+     *     <li> Messages are concurrently processed, multiplexed and are submitted to the {@code EventWriter} </li>
      *     <li> The {@code EventWriter} asynchronously manages the message publishing, returning a {@code CompletableFuture} upon message
      *     submission. The publishing of the multiplexed messages is hence <b>asynchronous</b>. </li>
      *     <li> The {@code CompletableFuture}s returned by {@code EventWriter}  are collected into a single {@code CompletableFuture} to observe
      *     the status of the publishing on the <b>ConsumerRecord</b> granularity-level. </li>
      *     <li> An {@code .exceptionally} callback is registered to track the least index of the failed message inside the {@code ConsumerRecords} batch. </li>
-     *     <li> Message processing is stopped upon first encountered error. As there is no known mechanism to propagate
+     *     <li> Full batch is processed, even upon errors. As there is no known mechanism to propagate
      *     the cancellation to the {@code EventWriter}, we wait for the messages submitted for publishing to complete and
      *     proceed with {@code nack}-ing the batch from the least failedIndex value </li>
      * </ul>
@@ -100,33 +102,39 @@ public class PublishedMessageListener extends AbstractConsumerSeekAware implemen
             final var messageInBatchIndex = i;
             final var span = tracer.startSpanFromKafkaHeaders("consume published message", consumerRecord.headers());
 
-            messagePublishingStatuses.add(
-                    CompletableFuture.supplyAsync(() -> {
-                                try (var ignored = tracer.withSpanInScope(span)) {
-                                    return task.call();
-                                } catch (Exception e) {
-                                    throw new CompletionException(e);
-                                }
-                            }, messageListenerExecutor)
-                            .thenCompose(Function.identity())
-                            .whenComplete((res, ex) -> {
-                                if (ex != null) {
-                                    span.error(ex);
-                                }
-                                span.finish();
-                            })
-                            .exceptionally(ex -> {
-                                log.warn("Unexpected exception in message publishing task", ex);
-                                updateFailedIndex(failedIndex, messageInBatchIndex);
-                                nackDueToTaskFailureCounter.increment();
-                                return null;
-                            }));
+            try {
+                messagePublishingStatuses.add(
+                        CompletableFuture.supplyAsync(() -> {
+                                    try (var ignored = tracer.withSpanInScope(span)) {
+                                        return task.call();
+                                    } catch (Exception e) {
+                                        throw new CompletionException(e);
+                                    }
+                                }, messageListenerExecutor)
+                                .thenCompose(Function.identity())
+                                .whenComplete((res, ex) -> {
+                                    if (ex != null) {
+                                        span.error(ex);
+                                    }
+                                    span.finish();
+                                })
+                                .exceptionally(ex -> {
+                                    log.warn("Unexpected exception in message publishing task", ex);
+                                    updateFailedIndex(failedIndex, messageInBatchIndex);
+                                    nackDueToTaskFailureCounter.increment();
+                                    return null;
+                                }));
+            } catch (RejectedExecutionException ex) {
+                // must only happen during application shutdown, since the used executor has unbounded queue
+                span.finish();
+                throw new RuntimeException(ex);
+            }
         }
 
         try {
             CompletableFuture
                     .allOf(messagePublishingStatuses.toArray(new CompletableFuture[0]))
-                    .get(kafkaMaxPollIntervalMs, TimeUnit.MILLISECONDS);
+                    .get(maxProcessingInterval, TimeUnit.MILLISECONDS);
 
             final var failedIndexValue = failedIndex.get();
             if (failedIndexValue != NO_NACK_INDEX) {
@@ -140,15 +148,14 @@ public class PublishedMessageListener extends AbstractConsumerSeekAware implemen
             Thread.currentThread().interrupt();
             nackCounter.increment();
             acknowledgment.nack(0, kafkaNackSleepDuration);
-            throw new RuntimeException(e);
         } catch (ExecutionException e) {
             log.warn("Unexpected ExecutionException while waiting for message publishing; must never happen", e);
             nackCounter.increment();
             acknowledgment.nack(0, kafkaNackSleepDuration);
-            throw new RuntimeException(e);
         } catch (TimeoutException e) {
             // The handling is done via max.poll.inverval.ms timeout behavior, here we free the thread from unbounded waiting
             log.error("Timed out while waiting for all messages to be processed and published", e);
+            acknowledgment.nack(0, kafkaNackSleepDuration);
         }
     }
 
