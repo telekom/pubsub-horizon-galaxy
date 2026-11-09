@@ -39,6 +39,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.NullAndEmptySource;
 import org.slf4j.MDC;
+import org.springframework.kafka.support.SendResult;
 
 import java.util.HashMap;
 import java.util.List;
@@ -161,7 +162,7 @@ class PublishedMessageTaskTest {
     }
 
     @Test
-    void callShouldReturnSuccessfulResultAndSkipProcessingWhenPayloadIsJsonNull() {
+    void callShouldThrowNullPointerExceptionAndSkipProcessingWhenPayloadIsJsonNull() {
         var consumerRecord = new ConsumerRecord<>("published", 0, 0L, "key", "null");
 
         var task = new PublishedMessageTask(consumerRecord, publishedMessageTaskFactory);
@@ -624,7 +625,7 @@ class PublishedMessageTaskTest {
         // NB! purely theoretical case since current Executor is unbounded
         // Executor rejects task -> sendFailed -> Executor rejects task again -> future completes exceptionally
         @Test
-        void callShouldReturnFailedResultWhenSubscriptionExecutorRejectsTask() throws JsonProcessingException {
+        void callShouldReturnFailedResultWhenExecutorRejectsCompletionCallbacks() throws JsonProcessingException {
             var sub = HorizonTestHelper.createDefaultSubscriptionResource("playground", "my.event.type");
             when(subscriberCache.getSubscriptionsForEnvironmentAndEventType("playground", "my.event.type")).thenReturn(List.of(sub));
             reset(executor);
@@ -717,14 +718,12 @@ class PublishedMessageTaskTest {
 
         // Primary send fails AND sendFailedStatusMessage throws InterruptedException -> skips deduplication, returns failed Future
         @Test
-        void callShouldReturnFailedResultAndSkipDeduplicationWhenFailedStatusSendIsInterrupted() throws Exception {
+        void callShouldThrowIllegalArgumentExceptionAndSkipProcessingWhenPayloadIsNull() throws Exception {
             var sub = HorizonTestHelper.createDefaultSubscriptionResource("playground", "my.event.type");
-            var interruptedFuture = mock(CompletableFuture.class);
-            when(interruptedFuture.get()).thenThrow(new InterruptedException("interrupted"));
+            var interruptedFuture = CompletableFuture.<SendResult<String, String>>failedFuture(new InterruptedException("interrupted"));
             when(subscriberCache.getSubscriptionsForEnvironmentAndEventType("playground", "my.event.type")).thenReturn(List.of(sub));
             when(eventWriter.send(anyString(), any(SubscriptionEventMessage.class), any()))
                     .thenReturn(CompletableFuture.failedFuture(new RuntimeException("primary failure")));
-            //noinspection unchecked
             when(eventWriter.send(anyString(), any(StatusMessage.class), any()))
                     .thenReturn(interruptedFuture);
 

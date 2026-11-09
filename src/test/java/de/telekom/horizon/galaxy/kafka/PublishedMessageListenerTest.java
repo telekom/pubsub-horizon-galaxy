@@ -93,7 +93,7 @@ class PublishedMessageListenerTest {
     }
 
     @Test
-    void onMessageShouldNackAtEarliestFailureWhenBothRejectionAndTaskFailure() {
+    void onMessageShouldThrowRejectedExecutionExceptionWhenTaskIsRejectedAfterEarlierTaskFailure() {
         var smallPoolListener = new PublishedMessageListener(factory, tracer, galaxyConfig, meterRegistry, executor, kafkaMaxPollIntervalMs);
 
         var record1 = new ConsumerRecord<>("topic", 0, 0L, "key1", "value1");
@@ -120,7 +120,7 @@ class PublishedMessageListenerTest {
         }).when(executor).execute(any(Runnable.class));
 
         // Should nack at index 0 (task failure at 0 is earlier than rejection at 1)
-        assertThrows(RejectedExecutionException.class, () -> smallPoolListener.onMessage(List.of(record1, record2), acknowledgment));
+        assertThrows(RuntimeException.class, () -> smallPoolListener.onMessage(List.of(record1, record2), acknowledgment));
         verify(failingTask).call();
         verify(normalButRejectedTask, never()).call();
         verify(executor, times(2)).execute(any(Runnable.class));
@@ -186,7 +186,7 @@ class PublishedMessageListenerTest {
         // Thread Pool Saturation (RejectedExecutionException at index i, breaks loop)
         // NB! The case as of now is purely theoretical, since current Executor is unbounded
         @Test
-        void onMessageShouldBreakSubmissionLoopAndNackAtRejectedIndexWhenPoolSaturated() {
+        void onMessageShouldBreakSubmissionLoopAndThrowWithoutNackingWhenPoolSaturated() {
             var record0 = new ConsumerRecord<>("topic", 0, 0L, "key0", "value0");
             var record1 = new ConsumerRecord<>("topic", 0, 1L, "key1", "value1");
             var record2 = new ConsumerRecord<>("topic", 0, 2L, "key2", "value2");
@@ -202,7 +202,7 @@ class PublishedMessageListenerTest {
 
             try (var executor = new ThreadPoolExecutor(1, 1, 0L, TimeUnit.MILLISECONDS, new SynchronousQueue<>())) {
                 var saturatedListener = new PublishedMessageListener(factory, tracer, galaxyConfig, meterRegistry, executor, kafkaMaxPollIntervalMs);
-                assertThrows(RejectedExecutionException.class, () -> saturatedListener.onMessage(List.of(record0, record1, record2), acknowledgment));
+                assertThrows(RuntimeException.class, () -> saturatedListener.onMessage(List.of(record0, record1, record2), acknowledgment));
             }
 
             verify(factory).newTask(record0);
@@ -313,7 +313,7 @@ class PublishedMessageListenerTest {
 
         // Future.get() throws InterruptedException (re-interrupts thread and breaks)
         @Test
-        void onMessageShouldRestoreInterruptFlagAndBreakWhenInterruptedWhileWaiting() throws InterruptedException {
+        void onMessageShouldRestoreInterruptFlagNackAtZeroAndThrowWhenInterruptedWhileWaiting() throws InterruptedException {
             try (var singleThreadExecutor = Executors.newSingleThreadExecutor()) {
                 reset(executor);
                 doAnswer(invocation -> {
@@ -386,7 +386,7 @@ class PublishedMessageListenerTest {
                     return CompletableFuture.completedFuture(null);
                 });
 
-                assertThrows(RejectedExecutionException.class, () -> smallPoolListener.onMessage(List.of(record0, record1), acknowledgment));
+                assertThrows(RuntimeException.class, () -> smallPoolListener.onMessage(List.of(record0, record1), acknowledgment));
 
                 verify(acknowledgment, never()).acknowledge();
                 verify(acknowledgment, never()).nack(anyInt(), any(Duration.class));
@@ -435,7 +435,7 @@ class PublishedMessageListenerTest {
                     return CompletableFuture.failedFuture(new Exception("test"));
                 });
 
-                assertThrows(RejectedExecutionException.class, () -> smallPoolListener.onMessage(List.of(record0, record1), acknowledgment));
+                assertThrows(RuntimeException.class, () -> smallPoolListener.onMessage(List.of(record0, record1), acknowledgment));
                 verify(acknowledgment, never()).acknowledge();
                 verify(acknowledgment, never()).nack(anyInt(), any(Duration.class));
                 assertEquals(0.0, meterRegistry.get("pubsub.kafka.listener.nacks").counter().count());
