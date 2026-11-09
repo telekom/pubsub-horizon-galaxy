@@ -718,7 +718,7 @@ class PublishedMessageTaskTest {
 
         // Primary send fails AND sendFailedStatusMessage throws InterruptedException -> skips deduplication, returns failed Future
         @Test
-        void callShouldThrowIllegalArgumentExceptionAndSkipProcessingWhenPayloadIsNull() throws Exception {
+        void callShouldReturnFailedResultAndSkipDeduplicationWhenFailedStatusSendIsInterrupted() throws Exception {
             var sub = HorizonTestHelper.createDefaultSubscriptionResource("playground", "my.event.type");
             var interruptedFuture = CompletableFuture.<SendResult<String, String>>failedFuture(new InterruptedException("interrupted"));
             when(subscriberCache.getSubscriptionsForEnvironmentAndEventType("playground", "my.event.type")).thenReturn(List.of(sub));

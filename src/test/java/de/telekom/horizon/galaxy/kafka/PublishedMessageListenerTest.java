@@ -93,7 +93,7 @@ class PublishedMessageListenerTest {
     }
 
     @Test
-    void onMessageShouldThrowRejectedExecutionExceptionWhenTaskIsRejectedAfterEarlierTaskFailure() {
+    void onMessageShouldThrowRuntimeExceptionWhenTaskIsRejectedAfterEarlierTaskFailure() {
         var smallPoolListener = new PublishedMessageListener(factory, tracer, galaxyConfig, meterRegistry, executor, kafkaMaxPollIntervalMs);
 
         var record1 = new ConsumerRecord<>("topic", 0, 0L, "key1", "value1");
@@ -119,7 +119,6 @@ class PublishedMessageListenerTest {
             return null;
         }).when(executor).execute(any(Runnable.class));
 
-        // Should nack at index 0 (task failure at 0 is earlier than rejection at 1)
         assertThrows(RuntimeException.class, () -> smallPoolListener.onMessage(List.of(record1, record2), acknowledgment));
         verify(failingTask).call();
         verify(normalButRejectedTask, never()).call();
@@ -313,7 +312,7 @@ class PublishedMessageListenerTest {
 
         // Future.get() throws InterruptedException (re-interrupts thread and breaks)
         @Test
-        void onMessageShouldRestoreInterruptFlagNackAtZeroAndThrowWhenInterruptedWhileWaiting() throws InterruptedException {
+        void onMessageShouldRestoreInterruptFlagAndNackAtZeroWhenInterruptedWhileWaiting() throws InterruptedException {
             try (var singleThreadExecutor = Executors.newSingleThreadExecutor()) {
                 reset(executor);
                 doAnswer(invocation -> {
