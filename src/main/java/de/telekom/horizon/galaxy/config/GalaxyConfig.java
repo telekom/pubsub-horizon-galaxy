@@ -17,24 +17,9 @@ import java.util.List;
 @Getter
 @Setter
 public class GalaxyConfig {
-
-    private int batchCoreThreadPoolSize;
-
-    private int batchMaxThreadPoolSize;
-
-    private int subscriptionCoreThreadPoolSize;
-
-    private int subscriptionMaxThreadPoolSize;
-
-    private int batchQueueCapacity;
-
-    private int subscriptionQueueCapacity;
+    private int messageListenerThreadPoolFixedSize;
 
     private long nackSleepDurationMs;
-
-    private long backpressureResumeCheckIntervalMs;
-
-    private double backpressureResumeThreshold;
 
     private String defaultEnvironment;
 
@@ -45,5 +30,4 @@ public class GalaxyConfig {
 
     @Value("#{'${galaxy.feature-jsonpath-filtering-event-types:}'.split(',')}")
     private List<String> featureJsonPathFilteringEventTypes;
-
 }
